@@ -1,3 +1,5 @@
 # Public.com official Python SDK (verify latest version with: pip index versions publicdotcom-py)
 publicdotcom-py
 python-dotenv
+requests
+anthropic       # only needed if you use the natural-language assist (your own AI key)

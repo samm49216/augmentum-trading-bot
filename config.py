@@ -21,6 +21,15 @@ API_SECRET_KEY = os.getenv("API_SECRET_KEY", "").strip()
 DEFAULT_ACCOUNT_NUMBER = os.getenv("DEFAULT_ACCOUNT_NUMBER", "").strip()
 TOKEN_VALIDITY_MINUTES = _int("TOKEN_VALIDITY_MINUTES", 15)
 
+# Moore Platform (hosted dashboard) — read-only snapshot push + config pull.
+PLATFORM_URL = os.getenv("PLATFORM_URL", "").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+PLATFORM_SYNC_SECONDS = _int("PLATFORM_SYNC_SECONDS", 30)
+
+# The CLIENT's own LLM key (their AI generates suggestions; never the operator's).
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8").strip()  # override to sonnet/haiku to cut cost
+
 # Master safety switch. Anything other than an explicit false-y value => DRY_RUN on.
 DRY_RUN = os.getenv("DRY_RUN", "true").strip().lower() not in ("false", "0", "no", "off")
 
