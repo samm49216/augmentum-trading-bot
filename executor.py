@@ -40,6 +40,26 @@ def effective_dry_run():
     return (not live) if live is not None else config.DRY_RUN
 
 
+def _runtime_autonomous():
+    """True/False from the platform (dashboard toggle), or None if not connected."""
+    try:
+        if RUNTIME.exists():
+            return bool(json.loads(RUNTIME.read_text()).get("autonomous"))
+    except Exception:
+        pass
+    return None
+
+
+def effective_autonomous():
+    """Resolve autonomous mode: the local hard-lock (FORCE_MANUAL_APPROVAL) always
+    wins and forces manual approval; else the dashboard's autonomous flag if
+    connected; else the local AUTONOMOUS default."""
+    if config.FORCE_MANUAL_APPROVAL:
+        return False
+    auto = _runtime_autonomous()
+    return auto if auto is not None else config.AUTONOMOUS
+
+
 def _position(client, symbol, account_id):
     """(cost_basis, current_value) for a held symbol, for realized-P&L math."""
     try:

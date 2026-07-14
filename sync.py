@@ -82,6 +82,7 @@ def build_snapshot(client):
     snap["day_trades_used"] = st.get("day_trades", 0)
     snap["realized_pl"] = float(ledger.get("realized_total", 0) or 0)
     snap["live"] = not executor.effective_dry_run()
+    snap["autonomous"] = executor.effective_autonomous()
     snap["strategies"] = [{
         "id": s.id, "name": s.name, "description": s.description,
         "allocation_usd": float(s.allocation_usd), "enabled": s.enabled,
@@ -118,9 +119,13 @@ def pull_and_apply_config():
         log.warning("config pull failed: %s", e)
         return []
 
-    # Live/dry-run toggle from the dashboard (the bot's FORCE_DRY_RUN can still hard-lock it).
+    # Live + autonomous toggles from the dashboard (the bot's FORCE_DRY_RUN and
+    # FORCE_MANUAL_APPROVAL hard-locks can still veto each locally).
     RUNTIME.parent.mkdir(exist_ok=True)
-    RUNTIME.write_text(json.dumps({"live": bool(cfg.get("live", False))}))
+    RUNTIME.write_text(json.dumps({
+        "live": bool(cfg.get("live", False)),
+        "autonomous": bool(cfg.get("autonomous", False)),
+    }))
 
     for pid in cfg.get("approvals", []):
         p = proposals.get(pid)

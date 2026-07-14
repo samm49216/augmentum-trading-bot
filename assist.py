@@ -89,3 +89,56 @@ def run_assist(request_text: str, strategies_ctx: list, portfolio_ctx: dict):
     except Exception as e:
         log.error("assist call failed: %s", e)
         return None
+
+
+SYSTEM_AUTO = (
+    "You are the account owner's OWN automated trading engine, running privately on "
+    "their machine with their own API key. The owner has deliberately switched ON "
+    "autonomous mode, pre-authorizing you to place trades that fit their configured "
+    "strategies and stay within their risk limits — without approving each one "
+    "individually. Given their strategies (each a capital bucket with a dollar "
+    "allocation and mandate) and a live portfolio snapshot, decide what, if anything, "
+    "to trade RIGHT NOW.\n\n"
+    "Be conservative and decisive: propose only high-conviction orders that clearly fit "
+    "a strategy's mandate and asset class; if nothing is warranted, return an empty "
+    "proposed_trades list — doing nothing is a valid, common outcome. Never exceed a "
+    "strategy's dollar allocation, and keep each order small. Every order still passes "
+    "independent risk guardrails (symbol allowlist, per-order + daily notional caps, "
+    "day-trade + daily-loss limits) before it can execute, so stay well within reason. "
+    "Return proposed_trades (orders to place now), a short summary of your reasoning, "
+    "any allocation_changes you'd recommend, and notes on risk. This is the owner's own "
+    "tool acting on their own pre-set mandate, not advice from any third party."
+)
+
+
+def run_autonomous(strategies_ctx: list, portfolio_ctx: dict, max_trades: int = 2):
+    """Autonomous cycle: the client's OWN Claude decides which trades to place now,
+    within their strategies + risk limits. Returns an AssistSuggestion or None."""
+    if not available():
+        return None
+    try:
+        import anthropic
+    except ImportError:
+        log.error("anthropic SDK not installed (pip install anthropic)")
+        return None
+
+    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    user_content = (
+        f"My strategies:\n{json.dumps(strategies_ctx, indent=2)}\n\n"
+        f"My live portfolio:\n{json.dumps(portfolio_ctx, indent=2)}\n\n"
+        f"Autonomous cycle. Propose at most {max_trades} order(s) to place right now "
+        "that fit my strategies and risk limits, or none if no action is warranted."
+    )
+    try:
+        resp = client.messages.parse(
+            model=config.ANTHROPIC_MODEL,
+            max_tokens=8000,
+            thinking={"type": "adaptive"},
+            system=[{"type": "text", "text": SYSTEM_AUTO, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": user_content}],
+            output_format=AssistSuggestion,
+        )
+        return resp.parsed_output
+    except Exception as e:
+        log.error("autonomous call failed: %s", e)
+        return None

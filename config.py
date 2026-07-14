@@ -38,6 +38,21 @@ DRY_RUN = os.getenv("DRY_RUN", "true").strip().lower() not in ("false", "0", "no
 # from their dashboard.
 FORCE_DRY_RUN = os.getenv("FORCE_DRY_RUN", "false").strip().lower() in ("true", "1", "yes", "on")
 
+# Autonomous mode — auto-approve + execute the client's own-AI-generated proposals
+# WITHOUT manual per-trade approval (24/7). Standalone default when no platform is
+# connected; normally driven by the dashboard toggle.
+AUTONOMOUS = os.getenv("AUTONOMOUS", "false").strip().lower() in ("true", "1", "yes", "on")
+
+# Local hard-lock: if true, EVERY trade requires manual approval no matter what the
+# dashboard says (blocks remote autonomous). The account owner's box always keeps a
+# veto over unattended trading. Leave false to let them enable autonomous remotely.
+FORCE_MANUAL_APPROVAL = os.getenv("FORCE_MANUAL_APPROVAL", "false").strip().lower() in ("true", "1", "yes", "on")
+
+# Autonomous generation cadence + per-cycle trade cap (risk guardrails still apply
+# on top of this — autonomous is never unbounded).
+AUTONOMOUS_TICK_SECONDS = _int("AUTONOMOUS_TICK_SECONDS", 900)
+MAX_AUTONOMOUS_TRADES_PER_TICK = _int("MAX_AUTONOMOUS_TRADES_PER_TICK", 2)
+
 # Risk guardrails (fail closed)
 SYMBOL_ALLOWLIST = [s.strip().upper() for s in os.getenv("SYMBOL_ALLOWLIST", "").split(",") if s.strip()]
 MAX_ORDER_NOTIONAL = _dec("MAX_ORDER_NOTIONAL", 250)
