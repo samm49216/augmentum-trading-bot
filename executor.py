@@ -4,16 +4,55 @@ Placement is GATED by config.DRY_RUN (default on). Nothing is auto-generated her
 this only acts on a proposal the client already approved. Order/preflight objects
 are built from the installed publicdotcom-py models.
 """
+import json
 import logging
 import uuid
 from decimal import Decimal
+from pathlib import Path
 
 import config
 import guardrails
+import pnl
 import proposals
 from guardrails import OrderIntent
 
 log = logging.getLogger("executor")
+
+RUNTIME = Path(__file__).parent / "state" / "runtime.json"
+
+
+def _runtime_live():
+    """True/False from the platform (dashboard toggle), or None if not connected."""
+    try:
+        if RUNTIME.exists():
+            return bool(json.loads(RUNTIME.read_text()).get("live"))
+    except Exception:
+        pass
+    return None
+
+
+def effective_dry_run():
+    """Resolve dry-run: local hard-lock wins; else the dashboard's live flag if
+    connected; else the local DRY_RUN default."""
+    if config.FORCE_DRY_RUN:
+        return True
+    live = _runtime_live()
+    return (not live) if live is not None else config.DRY_RUN
+
+
+def _position(client, symbol, account_id):
+    """(cost_basis, current_value) for a held symbol, for realized-P&L math."""
+    try:
+        pf = client.get_portfolio(account_id=account_id)
+        for pos in getattr(pf, "positions", []) or []:
+            inst = getattr(pos, "instrument", None)
+            if getattr(inst, "symbol", None) == symbol:
+                cb, cv = getattr(pos, "cost_basis", None), getattr(pos, "current_value", None)
+                if cb is not None and cv:
+                    return (Decimal(str(cb)), Decimal(str(cv)))
+    except Exception as e:
+        log.warning("cost-basis lookup failed for %s: %s", symbol, e)
+    return None
 
 
 def _instrument_type(asset_class):
@@ -92,15 +131,25 @@ def execute_proposal(client, p, strategy, account_id=None):
         proposals.set_status(p["id"], "failed", {"blocked": reason})
         return
 
-    if config.DRY_RUN:
+    if effective_dry_run():
         log.info("[DRY-RUN] would place %s %s (~$%s). Nothing sent.", p["side"], p["symbol"], intent.notional)
         proposals.set_status(p["id"], "executed", {"dry_run": True, "est_notional": str(intent.notional)})
         return
 
+    side = p["side"].upper()
+    presell = _position(client, p["symbol"], account_id) if side == "SELL" else None
     try:
         order = client.place_order(build_order_request(p), account_id=account_id)
         result = order.wait_for_terminal_status(timeout=120)
         guardrails.record_fill(intent)
+        if side == "BUY":
+            pnl.record_buy(p["strategy_id"], p["symbol"])
+        elif side == "SELL":
+            proceeds = Decimal(str(intent.notional or 0))
+            realized = Decimal("0")
+            if presell and presell[1]:
+                realized = proceeds * (Decimal("1") - (presell[0] / presell[1]))
+            pnl.record_sell(p["strategy_id"], p["symbol"], realized)
         status = str(getattr(result, "status", result))
         log.info("order %s terminal status: %s", p["id"], status)
         proposals.set_status(p["id"], "executed", {"status": status})

@@ -30,8 +30,13 @@ PLATFORM_SYNC_SECONDS = _int("PLATFORM_SYNC_SECONDS", 30)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8").strip()  # override to sonnet/haiku to cut cost
 
-# Master safety switch. Anything other than an explicit false-y value => DRY_RUN on.
+# Master safety switch (standalone default when no platform is connected).
 DRY_RUN = os.getenv("DRY_RUN", "true").strip().lower() not in ("false", "0", "no", "off")
+
+# Local hard-lock: if true, the bot stays in dry-run NO MATTER WHAT the dashboard
+# says (blocks remote go-live). Leave false to let the account owner flip live
+# from their dashboard.
+FORCE_DRY_RUN = os.getenv("FORCE_DRY_RUN", "false").strip().lower() in ("true", "1", "yes", "on")
 
 # Risk guardrails (fail closed)
 SYMBOL_ALLOWLIST = [s.strip().upper() for s in os.getenv("SYMBOL_ALLOWLIST", "").split(",") if s.strip()]

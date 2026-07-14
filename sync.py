@@ -4,18 +4,24 @@ PUSH: a read-only snapshot (portfolio + strategies + pending proposals) to the
 hosted dashboard so the client can see it. PULL: config (approvals + allocation
 changes + natural-language assist requests) and apply it LOCALLY. No keys ever leave.
 """
+import json
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import requests
 
 import config
+import executor
 import guardrails
+import pnl
 import proposals
 import strategies
 
 log = logging.getLogger("sync")
+
+RUNTIME = Path(__file__).parent / "state" / "runtime.json"
 
 
 def enabled():
@@ -61,11 +67,27 @@ def build_snapshot(client):
 
     st = guardrails.snapshot_state()
     deployed = st.get("strategy_notional", {})
+    ledger = pnl.snapshot()
+    sym_strat = ledger.get("symbol_strategy", {})
+    strat_realized = ledger.get("strategy_realized", {})
+
+    # Attribute each open position's unrealized P&L to the strategy that traded it.
+    unreal = {}
+    for pos in snap.get("positions", []):
+        sid = sym_strat.get(str(pos.get("symbol", "")).upper())
+        cost = pos.get("cost_basis")
+        if sid and cost is not None:
+            unreal[sid] = unreal.get(sid, 0.0) + (float(pos.get("value") or 0) - float(cost))
+
     snap["day_trades_used"] = st.get("day_trades", 0)
+    snap["realized_pl"] = float(ledger.get("realized_total", 0) or 0)
+    snap["live"] = not executor.effective_dry_run()
     snap["strategies"] = [{
         "id": s.id, "name": s.name, "description": s.description,
         "allocation_usd": float(s.allocation_usd), "enabled": s.enabled,
         "deployed": float(deployed.get(s.id, 0) or 0),
+        "realized_pl": float(strat_realized.get(s.id, 0) or 0),
+        "unrealized_pl": round(unreal.get(s.id, 0.0), 2),
     } for s in strategies.load_strategies()]
     snap["pending_proposals"] = [{
         "id": p["id"], "strategy_id": p["strategy_id"], "symbol": p["symbol"],
@@ -96,6 +118,10 @@ def pull_and_apply_config():
         log.warning("config pull failed: %s", e)
         return []
 
+    # Live/dry-run toggle from the dashboard (the bot's FORCE_DRY_RUN can still hard-lock it).
+    RUNTIME.parent.mkdir(exist_ok=True)
+    RUNTIME.write_text(json.dumps({"live": bool(cfg.get("live", False))}))
+
     for pid in cfg.get("approvals", []):
         p = proposals.get(pid)
         if p and p["status"] == "pending":
@@ -105,16 +131,30 @@ def pull_and_apply_config():
     changes = cfg.get("strategies", {})
     if changes:
         strats = strategies.load_strategies()
+        by_id = {s.id: s for s in strats}
         dirty = False
-        for s in strats:
-            if s.id in changes and "allocation_usd" in changes[s.id]:
-                new_alloc = Decimal(str(changes[s.id]["allocation_usd"]))
-                if new_alloc != s.allocation_usd:
-                    s.allocation_usd = new_alloc
+        for sid, ch in changes.items():
+            if sid in by_id:
+                s = by_id[sid]
+                if "allocation_usd" in ch:
+                    na = Decimal(str(ch["allocation_usd"]))
+                    if na != s.allocation_usd:
+                        s.allocation_usd = na
+                        dirty = True
+                if "enabled" in ch and bool(ch["enabled"]) != s.enabled:
+                    s.enabled = bool(ch["enabled"])
                     dirty = True
+            elif ch.get("name"):  # a new strategy the client created on the dashboard
+                strats.append(strategies.Strategy(
+                    id=sid, name=ch.get("name", sid), description=ch.get("description", ""),
+                    allocation_usd=Decimal(str(ch.get("allocation_usd", 0))),
+                    enabled=bool(ch.get("enabled", True)), asset_class=ch.get("asset_class", "equity"),
+                ))
+                dirty = True
+                log.info("created strategy from platform: %s", sid)
         if dirty:
             strategies.save_strategies(strats)
-            log.info("applied allocation changes from platform")
+            log.info("applied strategy changes from platform")
 
     return cfg.get("assist_requests", [])
 
