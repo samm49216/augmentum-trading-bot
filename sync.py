@@ -52,6 +52,8 @@ def build_snapshot(client):
                     "quantity": str(getattr(pos, "quantity", "")),
                     "value": _num(getattr(pos, "current_value", 0)),
                     "pct": _num(getattr(pos, "percent_of_portfolio", 0)),
+                    "cost_basis": _num(getattr(pos, "cost_basis", None)),
+                    "daily_gain": _num(getattr(pos, "position_daily_gain", None)),
                 })
             snap["positions"] = positions
         except Exception as e:
