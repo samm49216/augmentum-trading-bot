@@ -33,6 +33,11 @@ DAILY_LOSS_LIMIT = _dec("DAILY_LOSS_LIMIT", 100)
 ACCOUNT_EQUITY_FLOOR = _dec("ACCOUNT_EQUITY_FLOOR", 0)
 
 
+def require_api_key():
+    if not API_SECRET_KEY:
+        raise SystemExit("Missing API_SECRET_KEY. Copy .env.example -> .env and paste your key in.")
+
+
 def require_credentials():
     missing = [k for k, v in {
         "API_SECRET_KEY": API_SECRET_KEY,
