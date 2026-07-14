@@ -1,0 +1,23 @@
+[Unit]
+Description=Public Trading Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=botuser
+WorkingDirectory=/opt/public-trading-bot
+# Config is read from ./.env by python-dotenv (do NOT use EnvironmentFile — it
+# would keep inline comments as part of the value). Keep .env in WorkingDirectory.
+ExecStart=/opt/public-trading-bot/.venv/bin/python runner.py
+Restart=on-failure
+RestartSec=10
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/public-trading-bot
+
+[Install]
+WantedBy=multi-user.target

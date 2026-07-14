@@ -1,0 +1,3 @@
+# Public.com official Python SDK (verify latest version with: pip index versions publicdotcom-py)
+publicdotcom-py
+python-dotenv
