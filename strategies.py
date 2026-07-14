@@ -48,3 +48,16 @@ def get_strategy(strategy_id, path: Path = STRATEGIES_PATH):
         if s.id == strategy_id:
             return s
     return None
+
+
+def save_strategies(strats, path: Path = STRATEGIES_PATH):
+    data = {"strategies": [
+        {
+            "id": s.id, "name": s.name, "description": s.description,
+            "allocation_usd": float(s.allocation_usd), "enabled": bool(s.enabled),
+            "asset_class": s.asset_class, "params": s.params,
+        }
+        for s in strats
+    ]}
+    path.write_text(json.dumps(data, indent=2))
+

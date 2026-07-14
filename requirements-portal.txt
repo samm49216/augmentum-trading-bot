@@ -1,0 +1,4 @@
+# Client portal only (the engine/runner doesn't need these).
+# Install with: .venv/bin/pip install -r requirements-portal.txt
+streamlit
+pandas

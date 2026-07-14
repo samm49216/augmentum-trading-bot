@@ -48,6 +48,11 @@ def kill_switch_active() -> bool:
     return HALT_FILE.exists()
 
 
+def snapshot_state() -> dict:
+    """Read-only view of today's counters (notional, day_trades, per-strategy deployed)."""
+    return _load_state()
+
+
 def authorize(intent: OrderIntent):
     """Return (ok: bool, reason: str). Fails CLOSED on any doubt."""
     if kill_switch_active():

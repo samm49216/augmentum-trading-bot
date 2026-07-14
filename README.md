@@ -39,7 +39,18 @@ this package is the plumbing + guardrails, not a trading strategy.
 | `strategies.py` + `strategies.json` | Named strategies, each with its own $ allocation + plain-English description |
 | `proposals.py` | Propose → approve → execute queue (client approves every trade) |
 | `runner.py` | Daemon that executes client-**approved** proposals (respects DRY_RUN + HALT) |
+| `portal.py` | Client-facing Streamlit portal: strategy explainers, proposals (approve/execute), live portfolio |
 | `deploy/` | systemd unit + isolated-instance deploy guide |
+
+## Client portal
+The self-directed UI the account owner uses (their own key, on their own instance):
+```bash
+.venv/bin/pip install -r requirements-portal.txt
+.venv/bin/streamlit run portal.py
+```
+Three views: **Strategies** (adjust each bucket's allocation), **Proposals** (approve & execute
+ideas from your own Claude — DRY_RUN-gated), **Portfolio** (live read-only account view).
+Self-directed tool; not investment advice; every trade is client-approved.
 
 ## How a trade flows (non-discretionary)
 1. A trade idea (from the **client's own Claude** or the client) is added as a **pending** proposal.
