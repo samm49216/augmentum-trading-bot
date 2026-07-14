@@ -35,10 +35,18 @@ this package is the plumbing + guardrails, not a trading strategy.
 | `check_connection.py` | READ-ONLY connectivity + auth verifier (run first) |
 | `config.py` | Loads `.env` (credentials + risk limits) |
 | `guardrails.py` | Fail-closed risk checks: allowlist, notional caps, PDT counter, loss limit, kill switch |
-| `executor.py` | Safe order wrapper: preflight → guardrails → (dry-run \| place) |
-| `strategy.py` | **Stub** decision interface — the account owner implements what to trade |
-| `runner.py` | Main loop wiring strategy → executor (respects DRY_RUN + HALT) |
+| `executor.py` | Executes an approved proposal: preflight → guardrails → (dry-run \| place) |
+| `strategies.py` + `strategies.json` | Named strategies, each with its own $ allocation + plain-English description |
+| `proposals.py` | Propose → approve → execute queue (client approves every trade) |
+| `runner.py` | Daemon that executes client-**approved** proposals (respects DRY_RUN + HALT) |
 | `deploy/` | systemd unit + isolated-instance deploy guide |
+
+## How a trade flows (non-discretionary)
+1. A trade idea (from the **client's own Claude** or the client) is added as a **pending** proposal.
+2. The client **approves** it in the portal (or rejects it). Nothing auto-executes.
+3. `runner.py` picks up approved proposals and runs each through **preflight → guardrails
+   (incl. its strategy's allocation cap + PDT) → DRY_RUN gate → place**.
+Strategies are capital buckets: multiple can run at once, each capped at its `allocation_usd`.
 
 ## Kill switch
 

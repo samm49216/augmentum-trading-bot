@@ -1,20 +1,23 @@
-"""Main loop skeleton. By default trades NOTHING (empty strategy + DRY_RUN on).
+"""Execution daemon. Picks up client-APPROVED proposals and executes them
+(through guardrails + the DRY_RUN gate). Generates nothing on its own — trade
+ideas come from the client's Claude / the portal as pending proposals, and only
+the client's approval moves them here.
 
-Wires: read-only market data -> Strategy.decide() -> executor.submit().
-Respects the HALT kill switch and the DRY_RUN gate.
+Respects the HALT kill switch and DRY_RUN.
 """
 import logging
 import time
 
 import config
 import guardrails
-from executor import submit
-from strategy import Strategy
+import proposals
+import strategies
+from executor import execute_proposal
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("runner")
 
-POLL_SECONDS = 30
+POLL_SECONDS = 15
 
 
 def build_client():
@@ -25,20 +28,18 @@ def build_client():
             api_secret_key=config.API_SECRET_KEY,
             validity_minutes=config.TOKEN_VALIDITY_MINUTES,
         ),
-        config=PublicApiClientConfiguration(
-            default_account_number=config.DEFAULT_ACCOUNT_NUMBER,
-        ),
+        config=PublicApiClientConfiguration(default_account_number=config.DEFAULT_ACCOUNT_NUMBER),
     )
 
 
 def main():
     config.require_credentials()
-    log.info("Starting. DRY_RUN=%s  allowlist=%s", config.DRY_RUN, config.SYMBOL_ALLOWLIST)
+    log.info("Starting. DRY_RUN=%s  account=%s", config.DRY_RUN, config.DEFAULT_ACCOUNT_NUMBER)
     if config.DRY_RUN:
-        log.info("DRY_RUN is ON — no live orders will be placed.")
+        log.info("DRY_RUN is ON — approved proposals are simulated, no live orders.")
 
+    strat_by_id = {s.id: s for s in strategies.load_strategies()}
     client = build_client()
-    strategy = Strategy()
     try:
         while True:
             if guardrails.kill_switch_active():
@@ -46,12 +47,9 @@ def main():
                 time.sleep(POLL_SECONDS)
                 continue
 
-            # TODO(owner): gather the read-only market data your strategy needs
-            # (e.g. client.get_quotes([...]), client.get_bars(...)).
-            market = {}
-
-            for intent, build_order_request in strategy.decide(market):
-                submit(client, intent, build_order_request)
+            for p in proposals.list_all(status="approved"):
+                strat = strat_by_id.get(p["strategy_id"])
+                execute_proposal(client, p, strat, account_id=config.DEFAULT_ACCOUNT_NUMBER)
 
             time.sleep(POLL_SECONDS)
     except KeyboardInterrupt:

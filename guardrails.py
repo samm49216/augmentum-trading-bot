@@ -21,6 +21,8 @@ class OrderIntent:
     notional: Decimal = None        # estimated $ value; refined by preflight
     is_day_trade: bool = False
     asset_class: str = "equity"     # "equity" | "option" | "crypto"
+    strategy_id: str = "default"
+    allocation: Decimal = None      # the strategy's capital budget ($), if any
 
 
 def _today_state_path() -> Path:
@@ -30,9 +32,12 @@ def _today_state_path() -> Path:
 
 def _load_state() -> dict:
     p = _today_state_path()
-    if p.exists():
-        return json.loads(p.read_text())
-    return {"notional": "0", "day_trades": 0, "realized_pl": "0"}
+    s = json.loads(p.read_text()) if p.exists() else {}
+    s.setdefault("notional", "0")
+    s.setdefault("day_trades", 0)
+    s.setdefault("realized_pl", "0")
+    s.setdefault("strategy_notional", {})
+    return s
 
 
 def _save_state(s: dict) -> None:
@@ -72,6 +77,14 @@ def authorize(intent: OrderIntent):
     if Decimal(state["realized_pl"]) <= -config.DAILY_LOSS_LIMIT:
         return False, f"daily loss limit reached ({state['realized_pl']} <= -{config.DAILY_LOSS_LIMIT})"
 
+    # Per-strategy allocation: a strategy can't deploy more than its budget.
+    if intent.allocation is not None:
+        sid = intent.strategy_id or "default"
+        deployed = Decimal(state["strategy_notional"].get(sid, "0")) + Decimal(intent.notional)
+        if deployed > Decimal(intent.allocation):
+            return False, (f"strategy '{sid}' would exceed its ${intent.allocation} "
+                           f"allocation (deployed would be ${deployed})")
+
     return True, "ok"
 
 
@@ -82,4 +95,7 @@ def record_fill(intent: OrderIntent, realized_pl_delta: Decimal = Decimal("0")) 
     if intent.is_day_trade and intent.asset_class in ("equity", "option"):
         state["day_trades"] += 1
     state["realized_pl"] = str(Decimal(state["realized_pl"]) + Decimal(realized_pl_delta))
+    sid = intent.strategy_id or "default"
+    sn = state["strategy_notional"]
+    sn[sid] = str(Decimal(sn.get(sid, "0")) + Decimal(intent.notional or 0))
     _save_state(state)

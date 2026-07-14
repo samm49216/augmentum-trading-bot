@@ -1,69 +1,109 @@
-"""Safe order execution wrapper: preflight -> guardrails -> (dry-run | place).
+"""Execute an APPROVED proposal: preflight -> guardrails -> (dry-run | place).
 
-Placement is GATED by config.DRY_RUN. In dry-run (the default) nothing is sent.
-Only the account owner should set DRY_RUN=false. This module never decides WHAT
-to trade — it only enforces safety around an order the strategy already produced.
+Placement is GATED by config.DRY_RUN (default on). Nothing is auto-generated here;
+this only acts on a proposal the client already approved. Order/preflight objects
+are built from the installed publicdotcom-py models.
 """
 import logging
+import uuid
 from decimal import Decimal
 
 import config
 import guardrails
+import proposals
 from guardrails import OrderIntent
 
 log = logging.getLogger("executor")
 
 
-def submit(client, intent: OrderIntent, build_order_request):
-    """
-    client              : an initialized PublicApiClient
-    intent              : OrderIntent (symbol/side/asset_class/is_day_trade + optional
-                          rough notional estimate from the strategy)
-    build_order_request : zero-arg callable returning the SDK OrderRequest for LIVE placement
-    """
-    if guardrails.kill_switch_active():
-        log.warning("HALT engaged — refusing order for %s", intent.symbol)
-        return None
+def _instrument_type(asset_class):
+    from public_api_sdk import InstrumentType
+    return {
+        "crypto": InstrumentType.CRYPTO,
+        "equity": InstrumentType.EQUITY,
+        "option": InstrumentType.OPTION,
+        "index": InstrumentType.INDEX,
+    }.get((asset_class or "equity").lower(), InstrumentType.EQUITY)
 
-    # 1) Preflight: estimate cost WITHOUT hitting the market, and refine notional.
+
+def _common_kwargs(p):
+    """Fields shared by OrderRequest and PreflightRequest."""
+    from public_api_sdk import OrderInstrument, OrderExpirationRequest, OrderSide, OrderType, TimeInForce
+    k = dict(
+        instrument=OrderInstrument(symbol=p["symbol"], type=_instrument_type(p["asset_class"])),
+        order_side=OrderSide[p["side"].upper()],
+        order_type=OrderType[p["order_type"].upper()],
+        expiration=OrderExpirationRequest(time_in_force=TimeInForce.DAY, expiration_time=None),
+    )
+    if p.get("quantity") is not None:
+        k["quantity"] = Decimal(str(p["quantity"]))
+    if p.get("amount") is not None:
+        k["amount"] = Decimal(str(p["amount"]))
+    if p.get("limit_price") is not None:
+        k["limit_price"] = Decimal(str(p["limit_price"]))
+    return k
+
+
+def build_order_request(p):
+    from public_api_sdk import OrderRequest
+    return OrderRequest(order_id=uuid.uuid4().hex, **_common_kwargs(p))
+
+
+def build_preflight_request(p):
+    from public_api_sdk import PreflightRequest
+    return PreflightRequest(validate_order=False, **_common_kwargs(p))
+
+
+def _estimate_notional(client, p, account_id):
+    """What-if cost estimate via preflight (no market impact). Returns Decimal or None."""
     try:
-        estimate = _preflight(client, intent, build_order_request)
-        if estimate is not None:
-            intent.notional = Decimal(str(estimate))
+        resp = client.perform_preflight_calculation(build_preflight_request(p), account_id=account_id)
+        val = getattr(resp, "order_value", None)
+        if val is None:
+            val = getattr(resp, "estimated_cost", None)
+        return Decimal(str(val)) if val is not None else None
     except Exception as e:
-        log.error("preflight failed for %s: %s — refusing (fail-closed)", intent.symbol, e)
+        log.error("preflight failed for %s: %s", p["symbol"], e)
         return None
 
-    # 2) Guardrails (fail-closed).
+
+def execute_proposal(client, p, strategy, account_id=None):
+    """Run one approved proposal through the safe flow, updating its status."""
+    if guardrails.kill_switch_active():
+        log.warning("HALT engaged — skipping proposal %s", p["id"])
+        return
+    proposals.set_status(p["id"], "executing")
+
+    intent = OrderIntent(
+        symbol=p["symbol"], side=p["side"], asset_class=p["asset_class"],
+        strategy_id=p["strategy_id"],
+        allocation=(strategy.allocation_usd if strategy else None),
+        is_day_trade=bool(p.get("is_day_trade", False)),
+    )
+
+    est = _estimate_notional(client, p, account_id)
+    if est is None and p.get("amount") is not None:
+        est = Decimal(str(p["amount"]))
+    intent.notional = est
+
     ok, reason = guardrails.authorize(intent)
     if not ok:
-        log.warning("BLOCKED %s %s: %s", intent.side, intent.symbol, reason)
-        return None
+        log.warning("BLOCKED %s %s: %s", p["side"], p["symbol"], reason)
+        proposals.set_status(p["id"], "failed", {"blocked": reason})
+        return
 
-    # 3) Dry-run gate.
     if config.DRY_RUN:
-        log.info("[DRY-RUN] would place %s %s (~$%s). Nothing sent.",
-                 intent.side, intent.symbol, intent.notional)
-        return {"dry_run": True, "intent": intent}
+        log.info("[DRY-RUN] would place %s %s (~$%s). Nothing sent.", p["side"], p["symbol"], intent.notional)
+        proposals.set_status(p["id"], "executed", {"dry_run": True, "est_notional": str(intent.notional)})
+        return
 
-    # 4) LIVE placement — reached only when the account owner set DRY_RUN=false.
-    log.info("LIVE placing %s %s (~$%s)", intent.side, intent.symbol, intent.notional)
-    order = client.place_order(build_order_request())
-    result = order.wait_for_terminal_status(timeout=120)
-    guardrails.record_fill(intent)
-    log.info("order terminal status: %s", getattr(result, "status", result))
-    return result
-
-
-def _preflight(client, intent, build_order_request):
-    """Best-effort cost estimate. Returns estimated notional ($) or None.
-
-    Verify the exact call against your installed publicdotcom-py version, e.g.:
-        req  = build_order_request()
-        calc = client.perform_preflight_calculation(PreflightRequest(order=req),
-                                                     validate_order=False)  # what-if, no account checks
-        return calc.estimated_cost
-    Until implemented this returns None; combined with the guardrail rule
-    "notional not estimated => BLOCK", that keeps the bot fail-closed.
-    """
-    return None
+    try:
+        order = client.place_order(build_order_request(p), account_id=account_id)
+        result = order.wait_for_terminal_status(timeout=120)
+        guardrails.record_fill(intent)
+        status = str(getattr(result, "status", result))
+        log.info("order %s terminal status: %s", p["id"], status)
+        proposals.set_status(p["id"], "executed", {"status": status})
+    except Exception as e:
+        log.error("place failed for %s: %s", p["symbol"], e)
+        proposals.set_status(p["id"], "failed", {"error": str(e)})
