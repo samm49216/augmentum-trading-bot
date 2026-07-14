@@ -1,0 +1,16 @@
+[Unit]
+Description=Public Trading Bot — client portal (Streamlit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=botuser
+WorkingDirectory=/opt/public-trading-bot
+ExecStart=/opt/public-trading-bot/.venv/bin/streamlit run portal.py --server.port 8501 --server.address 127.0.0.1 --server.headless true --browser.gatherUsageStats false
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

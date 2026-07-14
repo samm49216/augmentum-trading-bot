@@ -13,11 +13,12 @@ own firewall) so the trader can't affect other services.
 sudo mkdir -p /opt/public-trading-bot && sudo chown botuser:botuser /opt/public-trading-bot
 sudo -u botuser -H bash
 cd /opt/public-trading-bot
-# copy the project files here (git clone or rsync)
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-cp .env.example .env      # then edit .env — see ONBOARDING.md for credentials
+# copy the project files here (git clone or rsync), then:
+./install.sh              # venv + deps + creates .env
 ```
+Edit `.env`: `API_SECRET_KEY`, `DEFAULT_ACCOUNT_NUMBER`, `BOT_TOKEN` (from your
+onboarding email), and optionally `ANTHROPIC_API_KEY` (the AI assistant).
+`PLATFORM_URL` is pre-filled to the shared dashboard. Keep `DRY_RUN=true`.
 
 ## 3. Validate BEFORE anything else
 ```bash
@@ -28,11 +29,14 @@ Keep `DRY_RUN=true` in `.env` and run `.venv/bin/python runner.py` to watch it l
 
 ## 4. Run 24/7 (only after dry-run looks right)
 ```bash
-sudo cp deploy/public-bot.service /etc/systemd/system/
+sudo cp deploy/public-bot.service deploy/public-bot-portal.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now public-bot
-journalctl -u public-bot -f          # live logs
+sudo systemctl enable --now public-bot          # the trading daemon (syncs to the dashboard)
+sudo systemctl enable --now public-bot-portal   # optional local control panel (127.0.0.1:8501)
+journalctl -u public-bot -f                     # live logs
 ```
+The daemon pushes read-only snapshots to the dashboard and pulls your approvals —
+so you can also drive it from the hosted site. The portal is a local extra.
 
 ## Kill switch
 ```bash
