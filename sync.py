@@ -169,7 +169,7 @@ def post_assist_result(result: dict):
     if not enabled():
         return
     try:
-        r = requests.post(_url("/api/assist_result"), json=result, headers=_headers(), timeout=20)
+        r = requests.post(_url("/api/assist-result"), json=result, headers=_headers(), timeout=20)
         r.raise_for_status()
     except Exception as e:
         log.warning("assist result post failed: %s", e)
