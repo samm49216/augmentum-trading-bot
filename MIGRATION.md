@@ -8,17 +8,11 @@ The client's API key still lives only in `.env` on the client's own machine (Pat
 
 ---
 
-## Step 1 — put the bot in a private GitHub repo (one time, operator side)
+## Step 1 — GitHub repo ✅ DONE
 
-From `~/projects/public-trading-bot`:
-
-```bash
-gh repo create augmentum-trading-bot --private --source=. --remote=origin --push
-```
-
-- `.gitignore` already excludes `.env`, `.venv/`, and `state/`, so no secrets or local
-  state get pushed — verify with `git ls-files | grep -E '\.env$|\.venv|state/'` (should be empty).
-- Give the client **read access** (or keep it operator-only and you run the updates).
+Live at **https://github.com/samm49216/augmentum-trading-bot** (public, branch `main`).
+`.gitignore` excludes `.env`, `.venv/`, and `state/`, so no secrets were pushed.
+Public = the client clones with zero GitHub auth. Push updates with `git push`.
 
 ## Step 2 — install on an always-on host (client side)
 
@@ -26,7 +20,7 @@ Pick one:
 
 ### Option A — the client's Mac (simplest, but only runs while the Mac is on)
 ```bash
-git clone git@github.com:<you>/augmentum-trading-bot.git
+git clone https://github.com/samm49216/augmentum-trading-bot.git
 cd augmentum-trading-bot
 ./install.sh                 # creates .venv + .env
 # edit .env (API key, BOT_TOKEN, DEFAULT_ACCOUNT_NUMBER), keep DRY_RUN=true
@@ -39,7 +33,7 @@ launchctl load ~/Library/LaunchAgents/systems.augmentum.bot.plist
 
 ### Option B — a small VPS ($5/mo, true 24/7) — recommended for live/autonomous
 ```bash
-git clone https://github.com/<you>/augmentum-trading-bot.git
+git clone https://github.com/samm49216/augmentum-trading-bot.git
 cd augmentum-trading-bot && ./install.sh
 # edit .env, then install the systemd unit already in deploy/
 sudo cp deploy/public-bot.service /etc/systemd/system/
