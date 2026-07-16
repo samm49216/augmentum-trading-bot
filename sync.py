@@ -73,21 +73,43 @@ def build_snapshot(client):
     if client is not None and config.DEFAULT_ACCOUNT_NUMBER:
         try:
             pf = client.get_portfolio(account_id=config.DEFAULT_ACCOUNT_NUMBER)
-            # "equity" on Public is the market value of POSITIONS — $0 for a funded but
-            # uninvested account. Report a true account balance = positions + cash so the
-            # dashboard always shows the client's money.
-            equity = _first_num(pf, ("equity", "market_value", "positions_value", "equity_value"))
-            cash = _first_num(pf, ("cash", "cash_balance", "available_cash", "settled_cash", "withdrawable_cash"))
-            total = _first_num(pf, ("account_value", "total_value", "total_equity", "net_liquidation_value", "portfolio_value"))
-            bp = _first_num(pf, ("buying_power",))
+            # Public's portfolio.equity is a LIST of holdings (each {type, value}); the
+            # account balance = sum of their values. buying_power is a nested object.
+            eq = getattr(pf, "equity", None)
+            cash = invested = None
+            if isinstance(eq, (list, tuple)):
+                total = 0.0; found = False; cashv = 0.0; invv = 0.0
+                for it in eq:
+                    v = _num(getattr(it, "value", None) if not isinstance(it, dict) else it.get("value"))
+                    if v is None:
+                        continue
+                    found = True; total += v
+                    ty = str((getattr(it, "type", "") if not isinstance(it, dict) else it.get("type", "")) or "").upper()
+                    if "CASH" in ty:
+                        cashv += v
+                    else:
+                        invv += v
+                total = total if found else None
+                cash, invested = (cashv, invv) if found else (None, None)
+            else:  # flat number formats (fallback)
+                invested = _first_num(pf, ("equity", "market_value", "positions_value", "equity_value"))
+                cash = _first_num(pf, ("cash", "cash_balance", "available_cash", "settled_cash"))
+                total = _first_num(pf, ("account_value", "total_value", "total_equity", "net_liquidation_value"))
+
+            bpobj = getattr(pf, "buying_power", None)
+            bp = _num(bpobj)
+            if bp is None and bpobj is not None:
+                bp = _first_num(bpobj, ("buying_power", "cash_only_buying_power", "options_buying_power"))
+
             if total is None:
-                parts = [x for x in (equity, cash) if x is not None]
-                total = sum(parts) if parts else bp   # last resort: show buying power
-            snap["equity"] = equity
+                parts = [x for x in (invested, cash) if x is not None]
+                total = sum(parts) if parts else bp
+
+            snap["equity"] = invested
             snap["cash"] = cash
             snap["buying_power"] = bp
             snap["account_value"] = total
-            if total is None:  # temporary: surface the raw structure so the balance parser can be fixed
+            if total is None:  # still unparsed — surface the raw structure to fix later
                 try:
                     snap["_portfolio_debug"] = str(pf.model_dump() if hasattr(pf, "model_dump") else vars(pf))[:900]
                 except Exception:
