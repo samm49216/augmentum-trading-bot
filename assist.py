@@ -215,7 +215,7 @@ def run_chat(message: str, bots_ctx: list, portfolio_ctx: dict, history_ctx: lis
         resp = client.messages.parse(
             model=config.ANTHROPIC_MODEL,
             max_tokens=16000,
-            thinking={"type": "adaptive"},
+            thinking={"type": "disabled"},   # structured output is the deliverable; thinking just ate the budget
             system=[{"type": "text", "text": SYSTEM_CHAT, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": "\n\n".join(parts)}],
             output_format=ChatResponse,
@@ -223,4 +223,4 @@ def run_chat(message: str, bots_ctx: list, portfolio_ctx: dict, history_ctx: lis
         return resp.parsed_output
     except Exception as e:
         log.error("chat call failed: %s", e)
-        return None
+        return {"__error__": f"{type(e).__name__}: {str(e)[:220]}"}   # temporary: surface the real error

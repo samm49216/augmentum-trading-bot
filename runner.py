@@ -176,6 +176,9 @@ def process_chat(client, cfg):
             sync.post_chat_reply("I couldn't reach your AI just now — please try again in a moment.",
                                  [], reply_to=m["id"])
             continue
+        if isinstance(resp, dict) and "__error__" in resp:  # temporary diagnostic surface
+            sync.post_chat_reply("⚙️ Diagnostic — the AI call errored: " + resp["__error__"], [], reply_to=m["id"])
+            continue
         summary, touched = apply_chat_actions(resp.actions)
         states = {s.id: {"name": s.name, "description": s.description, "rules": s.rules,
                          "asset_class": s.asset_class, "allocation_usd": float(s.allocation_usd),
