@@ -156,7 +156,7 @@ class BotAction(BaseModel):
     rules: str = ""
     asset_class: str = ""            # crypto|equity|option
     allocation_usd: Optional[float] = None
-    allowed_symbols: List[str] = []  # restrict this bot to these tickers; empty = any
+    allowed_symbols: str = ""        # restrict to these tickers, comma-separated (e.g. "AAPL,MSFT"); empty = any
     symbol: str = ""                 # for propose_trade
     side: str = ""                   # BUY|SELL
     amount: Optional[float] = None
@@ -179,8 +179,9 @@ SYSTEM_CHAT = (
     "- create_bot (name, rules, asset_class, allocation_usd, optional allowed_symbols) "
     "— NEW bots ALWAYS start in dry-run + manual; never make a new bot live or "
     "autonomous unless the owner explicitly asks for that in this very message. Set "
-    "allowed_symbols only if the owner names specific tickers to limit the bot to; "
-    "otherwise leave it empty (the bot may trade any symbol).\n"
+    "allowed_symbols (comma-separated tickers, e.g. \"AAPL,MSFT\") only if the owner "
+    "names specific tickers to limit the bot to; otherwise leave it an empty string "
+    "(the bot may trade any symbol).\n"
     "- adjust_bot (bot_id + any of name/description/rules/asset_class/allocation_usd/allowed_symbols)\n"
     "- pause_bot / resume_bot (bot_id)\n"
     "- set_live / set_dry (bot_id); set_autonomous / set_manual (bot_id)\n"
@@ -215,7 +216,7 @@ def run_chat(message: str, bots_ctx: list, portfolio_ctx: dict, history_ctx: lis
         resp = client.messages.parse(
             model=config.ANTHROPIC_MODEL,
             max_tokens=16000,
-            thinking={"type": "disabled"},   # structured output is the deliverable; thinking just ate the budget
+            thinking={"type": "adaptive"},
             system=[{"type": "text", "text": SYSTEM_CHAT, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": "\n\n".join(parts)}],
             output_format=ChatResponse,
