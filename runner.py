@@ -144,19 +144,25 @@ def apply_chat_actions(actions):
 
 
 def process_chat(client, cfg):
-    """Answer new client chat messages with the client's OWN AI; apply the actions
-    it returns and post the reply back into the thread."""
-    msgs = cfg.get("chat", []) or []
+    """Answer new client messages in each conversation with the client's OWN AI;
+    apply the actions it returns and post the reply back into that conversation."""
+    convs = cfg.get("conversations", []) or []
     seen = _load_chat_seen()
-    todo = [m for m in msgs if m.get("role") == "client" and m.get("id") and m.get("id") not in seen]
+    todo = []  # (conversation_id, message, history)
+    for conv in convs:
+        msgs = conv.get("messages", []) or []
+        for i, m in enumerate(msgs):
+            if m.get("role") == "client" and m.get("id") and m.get("id") not in seen:
+                hist = [{"role": x.get("role"), "text": x.get("text", "")} for x in msgs[:i + 1][-8:]]
+                todo.append((conv.get("id"), m, hist))
     if not todo:
         return
     if not assist.available():
-        for m in todo:
+        for cid, m, _ in todo:
             sync.post_chat_reply(
                 "Your AI isn't connected yet. Add your Anthropic API key to your bot's .env "
                 "(ANTHROPIC_API_KEY=...) and restart — then I can manage your bots from here.",
-                [], reply_to=m["id"])
+                [], reply_to=m["id"], conversation_id=cid)
             seen.add(m["id"])
         _save_chat_seen(seen)
         return
@@ -166,20 +172,19 @@ def process_chat(client, cfg):
                  "enabled": s.enabled, "live": s.live, "autonomous": s.autonomous}
                 for s in strategies.load_strategies()]
     port_ctx = _portfolio_ctx(client)
-    history = [{"role": m.get("role"), "text": m.get("text", "")} for m in msgs[-8:]]
 
-    for m in todo:
-        log.info("chat: answering %s", m.get("id"))
+    for cid, m, history in todo:
+        log.info("chat: answering %s (conv %s)", m.get("id"), cid)
         resp = assist.run_chat(m.get("text", ""), bots_ctx, port_ctx, history)
         seen.add(m["id"])
         if resp is None:
             sync.post_chat_reply("I couldn't reach your AI just now — please try again in a moment.",
-                                 [], reply_to=m["id"])
+                                 [], reply_to=m["id"], conversation_id=cid)
             continue
         if isinstance(resp, dict) and "__error__" in resp:
             log.error("chat AI error: %s", resp["__error__"])   # detail stays in the bot log
             sync.post_chat_reply("Sorry — I hit a snag on that one. Please try again, or rephrase it a little.",
-                                 [], reply_to=m["id"])
+                                 [], reply_to=m["id"], conversation_id=cid)
             continue
         summary, touched = apply_chat_actions(resp.actions)
         states = {s.id: {"name": s.name, "description": s.description, "rules": s.rules,
@@ -187,7 +192,7 @@ def process_chat(client, cfg):
                          "enabled": s.enabled, "live": s.live, "autonomous": s.autonomous,
                          "allowed_symbols": list(s.allowed_symbols or [])}
                   for s in strategies.load_strategies() if s.id in touched}
-        sync.post_chat_reply(resp.reply or "Done.", summary, reply_to=m["id"], bot_states=states)
+        sync.post_chat_reply(resp.reply or "Done.", summary, reply_to=m["id"], bot_states=states, conversation_id=cid)
     _save_chat_seen(seen)
 
 

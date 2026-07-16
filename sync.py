@@ -252,15 +252,15 @@ def post_assist_result(result: dict):
         log.warning("assist result post failed: %s", e)
 
 
-def post_chat_reply(text: str, actions=None, reply_to=None, bot_states=None):
-    """Post the client-AI's chat reply (+ a summary of what it changed, + the new
-    state of any bots it touched so the dashboard config stays in sync) into the thread."""
+def post_chat_reply(text: str, actions=None, reply_to=None, bot_states=None, conversation_id=None):
+    """Post the client-AI's chat reply into its conversation (+ a summary of what it
+    changed, + the new state of any bots it touched so the dashboard stays in sync)."""
     if not enabled():
         return
     try:
         r = requests.post(_url("/api/chat-reply"),
                           json={"text": text, "actions": actions or [], "reply_to": reply_to,
-                                "bot_states": bot_states or {}},
+                                "bot_states": bot_states or {}, "conversation_id": conversation_id},
                           headers=_headers(), timeout=20)
         r.raise_for_status()
     except Exception as e:
