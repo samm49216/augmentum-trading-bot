@@ -58,8 +58,19 @@ def build_snapshot(client):
     if client is not None and config.DEFAULT_ACCOUNT_NUMBER:
         try:
             pf = client.get_portfolio(account_id=config.DEFAULT_ACCOUNT_NUMBER)
-            snap["equity"] = _first_num(pf, ("equity", "total_equity", "account_value", "equity_value", "total_value"))
-            snap["buying_power"] = _first_num(pf, ("buying_power", "cash", "cash_balance", "available_cash"))
+            # "equity" on Public is the market value of POSITIONS — $0 for a funded but
+            # uninvested account. Report a true account balance = positions + cash so the
+            # dashboard always shows the client's money.
+            equity = _first_num(pf, ("equity", "market_value", "positions_value", "equity_value"))
+            cash = _first_num(pf, ("cash", "cash_balance", "available_cash", "settled_cash", "withdrawable_cash"))
+            total = _first_num(pf, ("account_value", "total_value", "total_equity", "net_liquidation_value", "portfolio_value"))
+            if total is None:
+                parts = [x for x in (equity, cash) if x is not None]
+                total = sum(parts) if parts else None
+            snap["equity"] = equity
+            snap["cash"] = cash
+            snap["buying_power"] = _first_num(pf, ("buying_power",))
+            snap["account_value"] = total
             positions = []
             for pos in getattr(pf, "positions", []) or []:
                 inst = getattr(pos, "instrument", None)
