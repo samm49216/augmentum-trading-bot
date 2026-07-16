@@ -9,7 +9,7 @@ and proposed trades become pending proposals the client must still approve.
 """
 import json
 import logging
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -141,4 +141,83 @@ def run_autonomous(strategies_ctx: list, portfolio_ctx: dict, max_trades: int = 
         return resp.parsed_output
     except Exception as e:
         log.error("autonomous call failed: %s", e)
+        return None
+
+
+# ── Conversational fleet control ─────────────────────────────────────────────
+# The client talks to their own AI in a thread; it replies AND emits concrete
+# actions on their bots (create / adjust / pause / go live / propose a trade).
+
+class BotAction(BaseModel):
+    type: str                        # create_bot|adjust_bot|pause_bot|resume_bot|set_live|set_dry|set_autonomous|set_manual|propose_trade
+    bot_id: str = ""
+    name: str = ""
+    description: str = ""
+    rules: str = ""
+    asset_class: str = ""            # crypto|equity|option
+    allocation_usd: Optional[float] = None
+    symbol: str = ""                 # for propose_trade
+    side: str = ""                   # BUY|SELL
+    amount: Optional[float] = None
+    rationale: str = ""
+
+
+class ChatResponse(BaseModel):
+    reply: str                       # plain-English message shown to the client
+    actions: List[BotAction]         # concrete actions to apply (may be empty)
+
+
+SYSTEM_CHAT = (
+    "You are the account owner's OWN trading assistant, running privately on their "
+    "machine with their own API key. You manage their fleet of trading 'bots' by "
+    "conversation. Each bot is a named strategy with a dollar allocation, a plain-"
+    "English rules/mandate, an asset class, and its own state (enabled, live vs "
+    "dry-run, autonomous vs manual).\n\n"
+    "Given the owner's message, their current bots, and a portfolio snapshot, write a "
+    "short plain-English reply AND emit concrete actions to apply. Actions:\n"
+    "- create_bot (name, rules, asset_class, allocation_usd) — NEW bots ALWAYS start "
+    "in dry-run + manual; never make a new bot live or autonomous unless the owner "
+    "explicitly asks for that in this very message.\n"
+    "- adjust_bot (bot_id + any of name/description/rules/asset_class/allocation_usd)\n"
+    "- pause_bot / resume_bot (bot_id)\n"
+    "- set_live / set_dry (bot_id); set_autonomous / set_manual (bot_id)\n"
+    "- propose_trade (bot_id, symbol, side, amount, rationale) — one order the owner "
+    "still approves.\n\n"
+    "Confirm exactly what you did in the reply (e.g. 'Created an ITM Options bot in "
+    "dry-run with a $150 allocation — turn it live from its card when ready.'). If the "
+    "owner only asked a question, reply with an empty actions list. Keep allocations "
+    "within what the portfolio supports. This is the owner's own tool, not third-party advice."
+)
+
+
+def run_chat(message: str, bots_ctx: list, portfolio_ctx: dict, history_ctx: list = None):
+    """Conversational fleet control via the client's OWN Claude. Returns a
+    ChatResponse (reply + actions) or None."""
+    if not available():
+        return None
+    try:
+        import anthropic
+    except ImportError:
+        log.error("anthropic SDK not installed (pip install anthropic)")
+        return None
+
+    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    parts = []
+    if history_ctx:
+        parts.append(f"Recent conversation (oldest first):\n{json.dumps(history_ctx, indent=2)}")
+    parts.append(f"My bots:\n{json.dumps(bots_ctx, indent=2)}")
+    parts.append(f"My portfolio:\n{json.dumps(portfolio_ctx, indent=2)}")
+    parts.append(f'My new message:\n"{message}"')
+    try:
+        resp = client.messages.parse(
+            model=config.ANTHROPIC_MODEL,
+            max_tokens=8000,
+            thinking={"type": "adaptive"},
+            system=[{"type": "text", "text": SYSTEM_CHAT, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": "\n\n".join(parts)}],
+            output_format=ChatResponse,
+        )
+        return resp.parsed_output
+    except Exception as e:
+        log.error("chat call failed: %s", e)
         return None

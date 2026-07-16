@@ -31,11 +31,17 @@ def _runtime_live():
     return None
 
 
-def effective_dry_run():
-    """Resolve dry-run: local hard-lock wins; else the dashboard's live flag if
-    connected; else the local DRY_RUN default."""
+def effective_dry_run(strategy=None):
+    """Resolve dry-run. Fail-safe order: the local hard-lock (FORCE_DRY_RUN) and a
+    dashboard STOP always force dry-run. Otherwise a specific bot trades live ONLY if
+    that bot is explicitly set live; with no bot context, fall back to the
+    account-level flag / local default."""
     if config.FORCE_DRY_RUN:
         return True
+    if runtime_stopped():
+        return True
+    if strategy is not None:
+        return not bool(getattr(strategy, "live", False))
     live = _runtime_live()
     return (not live) if live is not None else config.DRY_RUN
 
@@ -161,7 +167,7 @@ def execute_proposal(client, p, strategy, account_id=None):
         proposals.set_status(p["id"], "failed", {"blocked": reason})
         return
 
-    if effective_dry_run():
+    if effective_dry_run(strategy):
         log.info("[DRY-RUN] would place %s %s (~$%s). Nothing sent.", p["side"], p["symbol"], intent.notional)
         proposals.set_status(p["id"], "executed", {"dry_run": True, "est_notional": str(intent.notional)})
         return

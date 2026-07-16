@@ -12,6 +12,7 @@ from pathlib import Path
 
 import requests
 
+import assist
 import config
 import executor
 import guardrails
@@ -90,16 +91,20 @@ def build_snapshot(client):
 
     snap["day_trades_used"] = st.get("day_trades", 0)
     snap["realized_pl"] = float(ledger.get("realized_total", 0) or 0)
-    snap["live"] = not executor.effective_dry_run()
-    snap["autonomous"] = executor.effective_autonomous()
     snap["stopped"] = executor.runtime_stopped()
+    snap["ai_connected"] = assist.available()
     snap["strategies"] = [{
-        "id": s.id, "name": s.name, "description": s.description,
+        "id": s.id, "name": s.name, "description": s.description, "rules": s.rules,
+        "asset_class": s.asset_class,
         "allocation_usd": float(s.allocation_usd), "enabled": s.enabled,
+        "live": bool(s.live), "autonomous": bool(s.autonomous),
         "deployed": float(deployed.get(s.id, 0) or 0),
         "realized_pl": float(strat_realized.get(s.id, 0) or 0),
         "unrealized_pl": round(unreal.get(s.id, 0.0), 2),
     } for s in strategies.load_strategies()]
+    # header aggregates (any bot live / autonomous)
+    snap["live"] = any(x["live"] for x in snap["strategies"])
+    snap["autonomous"] = any(x["autonomous"] for x in snap["strategies"])
     snap["pending_proposals"] = [{
         "id": p["id"], "strategy_id": p["strategy_id"], "symbol": p["symbol"],
         "side": p["side"], "amount": p.get("amount"), "rationale": p.get("rationale", ""),
@@ -150,29 +155,29 @@ def pull_and_apply_config():
         by_id = {s.id: s for s in strats}
         dirty = False
         for sid, ch in changes.items():
-            if sid in by_id:
-                s = by_id[sid]
-                if "allocation_usd" in ch:
-                    na = Decimal(str(ch["allocation_usd"]))
-                    if na != s.allocation_usd:
-                        s.allocation_usd = na
-                        dirty = True
-                if "enabled" in ch and bool(ch["enabled"]) != s.enabled:
-                    s.enabled = bool(ch["enabled"])
-                    dirty = True
-            elif ch.get("name"):  # a new strategy the client created on the dashboard
-                strats.append(strategies.Strategy(
-                    id=sid, name=ch.get("name", sid), description=ch.get("description", ""),
-                    allocation_usd=Decimal(str(ch.get("allocation_usd", 0))),
-                    enabled=bool(ch.get("enabled", True)), asset_class=ch.get("asset_class", "equity"),
-                ))
-                dirty = True
-                log.info("created strategy from platform: %s", sid)
+            s = by_id.get(sid)
+            if s is None:
+                if not ch.get("name"):
+                    continue  # an override for a bot we don't have + no definition to create
+                s = strategies.Strategy(id=sid, name=ch.get("name", sid), description="",
+                                        allocation_usd=Decimal("0"))
+                strats.append(s); by_id[sid] = s; dirty = True
+                log.info("created bot from dashboard: %s", sid)
+            for f in ("name", "description", "rules", "asset_class"):
+                if f in ch and getattr(s, f) != ch[f]:
+                    setattr(s, f, ch[f]); dirty = True
+            if "allocation_usd" in ch:
+                na = Decimal(str(ch["allocation_usd"]))
+                if na != s.allocation_usd:
+                    s.allocation_usd = na; dirty = True
+            for f in ("enabled", "live", "autonomous"):
+                if f in ch and bool(ch[f]) != getattr(s, f):
+                    setattr(s, f, bool(ch[f])); dirty = True
         if dirty:
             strategies.save_strategies(strats)
-            log.info("applied strategy changes from platform")
+            log.info("applied bot changes from dashboard")
 
-    return cfg.get("assist_requests", [])
+    return cfg
 
 
 def post_assist_result(result: dict):
@@ -184,3 +189,18 @@ def post_assist_result(result: dict):
         r.raise_for_status()
     except Exception as e:
         log.warning("assist result post failed: %s", e)
+
+
+def post_chat_reply(text: str, actions=None, reply_to=None, bot_states=None):
+    """Post the client-AI's chat reply (+ a summary of what it changed, + the new
+    state of any bots it touched so the dashboard config stays in sync) into the thread."""
+    if not enabled():
+        return
+    try:
+        r = requests.post(_url("/api/chat-reply"),
+                          json={"text": text, "actions": actions or [], "reply_to": reply_to,
+                                "bot_states": bot_states or {}},
+                          headers=_headers(), timeout=20)
+        r.raise_for_status()
+    except Exception as e:
+        log.warning("chat reply post failed: %s", e)

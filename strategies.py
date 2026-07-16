@@ -17,6 +17,8 @@ EXAMPLE_PATH = Path(__file__).parent / "strategies.example.json"
 
 @dataclass
 class Strategy:
+    """A "bot": a named capital bucket with a plain-English mandate (rules), its own
+    dollar allocation, and its own execution state (enabled / live / autonomous)."""
     id: str
     name: str
     description: str
@@ -24,6 +26,9 @@ class Strategy:
     enabled: bool = True
     asset_class: str = "equity"     # equity | crypto | option
     params: dict = field(default_factory=dict)
+    rules: str = ""                 # free-text trading mandate the client's AI acts on
+    live: bool = False              # per-bot: real orders (True) vs dry-run (False)
+    autonomous: bool = False        # per-bot: trade 24/7 without per-trade approval
 
 
 def load_strategies(path: Path = STRATEGIES_PATH):
@@ -45,6 +50,9 @@ def load_strategies(path: Path = STRATEGIES_PATH):
             enabled=bool(s.get("enabled", True)),
             asset_class=s.get("asset_class", "equity"),
             params=s.get("params", {}),
+            rules=s.get("rules", ""),
+            live=bool(s.get("live", False)),
+            autonomous=bool(s.get("autonomous", False)),
         ))
     return out
 
@@ -62,6 +70,7 @@ def save_strategies(strats, path: Path = STRATEGIES_PATH):
             "id": s.id, "name": s.name, "description": s.description,
             "allocation_usd": float(s.allocation_usd), "enabled": bool(s.enabled),
             "asset_class": s.asset_class, "params": s.params,
+            "rules": s.rules, "live": bool(s.live), "autonomous": bool(s.autonomous),
         }
         for s in strats
     ]}

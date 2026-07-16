@@ -1,17 +1,18 @@
-"""Execution daemon + platform sync + AI assist.
+"""Execution daemon + platform sync + conversational fleet control.
 
-Each cycle: pull config from the platform (apply approvals + allocation changes,
-collect natural-language assist requests) -> run the client's OWN AI on new assist
-requests -> execute client-APPROVED proposals -> push a read-only snapshot back.
-
-Generates no trades on its own. Respects the HALT kill switch and DRY_RUN.
+Each cycle (every POLL_SECONDS): self-update → pull config (apply per-bot dashboard
+changes + approvals) → per-bot autonomous generation → auto-approve autonomous bots'
+proposals → execute approved (per-bot dry-run gating) → answer the client's chat →
+push a read-only snapshot. Honors the HALT file and the dashboard STOP.
 """
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
+from decimal import Decimal
 from pathlib import Path
 
 import assist
@@ -20,13 +21,13 @@ import guardrails
 import proposals
 import strategies
 import sync
-from executor import execute_proposal, effective_autonomous, runtime_stopped
+from executor import execute_proposal, runtime_stopped
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("runner")
 
-POLL_SECONDS = 15
-ASSIST_SEEN = Path(__file__).parent / "state" / "assist_seen.json"
+POLL_SECONDS = 10          # ~10s round-trip for chat + dashboard control
+CHAT_SEEN = Path(__file__).parent / "state" / "chat_seen.json"
 
 
 def build_client():
@@ -38,94 +39,148 @@ def build_client():
     )
 
 
-def _load_seen():
-    return set(json.loads(ASSIST_SEEN.read_text())) if ASSIST_SEEN.exists() else set()
+def _load_chat_seen():
+    return set(json.loads(CHAT_SEEN.read_text())) if CHAT_SEEN.exists() else set()
 
 
-def _save_seen(seen):
-    ASSIST_SEEN.parent.mkdir(exist_ok=True)
-    ASSIST_SEEN.write_text(json.dumps(sorted(seen)))
+def _save_chat_seen(seen):
+    CHAT_SEEN.parent.mkdir(exist_ok=True)
+    CHAT_SEEN.write_text(json.dumps(sorted(seen)))
 
 
-def process_assist(client, requests_):
-    """Run the client's own AI on new NL requests; turn proposed trades into pending
-    proposals and push the suggestions back to the platform for display."""
-    if not requests_ or not assist.available():
-        return
-    seen = _load_seen()
-    strat_ctx = [{
-        "id": s.id, "name": s.name, "description": s.description,
-        "allocation_usd": float(s.allocation_usd), "enabled": s.enabled, "asset_class": s.asset_class,
-    } for s in strategies.load_strategies()]
-    port_ctx = {}
+def _slug(name):
+    s = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return s or "bot"
+
+
+def _portfolio_ctx(client):
     try:
         if config.DEFAULT_ACCOUNT_NUMBER:
             pf = client.get_portfolio(account_id=config.DEFAULT_ACCOUNT_NUMBER)
-            port_ctx = {"equity": str(getattr(pf, "equity", "")),
-                        "buying_power": str(getattr(pf, "buying_power", ""))}
+            return {"equity": str(getattr(pf, "equity", "")),
+                    "buying_power": str(getattr(pf, "buying_power", ""))}
     except Exception as e:
-        log.warning("portfolio context unavailable for assist: %s", e)
-
-    for r in requests_:
-        rid = r.get("id")
-        if not rid or rid in seen:
-            continue
-        log.info("assist: reviewing request %s", rid)
-        sugg = assist.run_assist(r.get("text", ""), strat_ctx, port_ctx)
-        seen.add(rid)  # mark seen even on failure so we don't loop on it
-        if sugg is not None:
-            for t in sugg.proposed_trades:
-                try:
-                    proposals.add(t.strategy_id, t.symbol, t.side, t.asset_class,
-                                  amount=t.amount, rationale=t.rationale, source="assist-ai")
-                except Exception as e:
-                    log.warning("assist proposed trade rejected: %s", e)
-            sync.post_assist_result({
-                "request_id": rid,
-                "text": r.get("text", ""),
-                "summary": sugg.summary,
-                "allocation_changes": [ac.model_dump() for ac in sugg.allocation_changes],
-                "notes": sugg.notes,
-            })
-        _save_seen(seen)
+        log.warning("portfolio context unavailable: %s", e)
+    return {}
 
 
-def autonomous_tick(client):
-    """Autonomous mode: the client's OWN AI proposes trades to place now, within
-    their enabled strategies + risk limits. Adds them as proposals (which the loop
-    then auto-approves + executes). Guardrails still gate every order."""
+def autonomous_tick(client, strat):
+    """Autonomous mode for ONE bot: its own AI proposes trades within that bot's
+    rules. Proposals still pass guardrails + the dry-run gate before executing."""
     if not assist.available():
-        log.warning("autonomous is ON but no ANTHROPIC_API_KEY is set — can't generate "
-                    "trades. Add your key to .env to enable autonomous generation.")
         return
-    strat_ctx = [{
-        "id": s.id, "name": s.name, "description": s.description,
-        "allocation_usd": float(s.allocation_usd), "enabled": s.enabled, "asset_class": s.asset_class,
-    } for s in strategies.load_strategies() if s.enabled]
-    if not strat_ctx:
-        log.info("autonomous tick: no enabled strategies — nothing to do.")
-        return
-    port_ctx = {}
-    try:
-        if config.DEFAULT_ACCOUNT_NUMBER:
-            pf = client.get_portfolio(account_id=config.DEFAULT_ACCOUNT_NUMBER)
-            port_ctx = {"equity": str(getattr(pf, "equity", "")),
-                        "buying_power": str(getattr(pf, "buying_power", ""))}
-    except Exception as e:
-        log.warning("portfolio context unavailable for autonomous tick: %s", e)
-
-    sugg = assist.run_autonomous(strat_ctx, port_ctx, max_trades=config.MAX_AUTONOMOUS_TRADES_PER_TICK)
+    ctx = [{"id": strat.id, "name": strat.name, "description": strat.description,
+            "rules": strat.rules, "allocation_usd": float(strat.allocation_usd),
+            "asset_class": strat.asset_class}]
+    sugg = assist.run_autonomous(ctx, _portfolio_ctx(client),
+                                 max_trades=config.MAX_AUTONOMOUS_TRADES_PER_TICK)
     if sugg is None:
         return
     added = 0
     for t in sugg.proposed_trades[: config.MAX_AUTONOMOUS_TRADES_PER_TICK]:
         try:
-            proposals.add(t.strategy_id, t.symbol, t.side, t.asset_class,
+            proposals.add(strat.id, t.symbol, t.side, t.asset_class or strat.asset_class,
                           amount=t.amount, rationale=t.rationale, source="autonomous-ai")
             added += 1
         except Exception as e:
-            log.warning("autonomous proposed trade rejected: %s", e)
-    log.info("autonomous tick: generated %s proposal(s). %s", added, (sugg.summary or "")[:200])
+            log.warning("autonomous trade rejected [%s]: %s", strat.id, e)
+    if added:
+        log.info("autonomous tick [%s]: generated %s proposal(s)", strat.id, added)
+
+
+def apply_chat_actions(actions):
+    """Apply the AI's bot actions to the local fleet. Returns human-readable summaries."""
+    strats = strategies.load_strategies()
+    by_id = {s.id: s for s in strats}
+    applied, dirty, touched = [], False, set()
+    for a in actions or []:
+        t = (a.type or "").lower()
+        if t == "create_bot":
+            base = _slug(a.name or a.bot_id)
+            sid, i = base, 2
+            while sid in by_id:
+                sid, i = f"{base}-{i}", i + 1
+            s = strategies.Strategy(
+                id=sid, name=a.name or sid, description=a.description or "",
+                allocation_usd=Decimal(str(a.allocation_usd or 0)), enabled=True,
+                asset_class=(a.asset_class or "equity"), rules=a.rules or "",
+                live=False, autonomous=False)
+            strats.append(s); by_id[sid] = s; dirty = True; touched.add(sid)
+            applied.append(f"Created bot '{s.name}' (dry-run, manual)")
+        elif t == "propose_trade":
+            s = by_id.get(a.bot_id)
+            try:
+                proposals.add(a.bot_id, a.symbol, a.side, a.asset_class or (s.asset_class if s else "equity"),
+                              amount=a.amount, rationale=a.rationale, source="chat-ai")
+                applied.append(f"Proposed {a.side} {a.symbol} (needs your approval)")
+            except Exception as e:
+                applied.append(f"Trade not added: {e}")
+        else:
+            s = by_id.get(a.bot_id)
+            if not s:
+                applied.append(f"(couldn't find bot '{a.bot_id}')")
+                continue
+            if t == "adjust_bot":
+                if a.name: s.name = a.name
+                if a.description: s.description = a.description
+                if a.rules: s.rules = a.rules
+                if a.asset_class: s.asset_class = a.asset_class
+                if a.allocation_usd is not None: s.allocation_usd = Decimal(str(a.allocation_usd))
+                applied.append(f"Adjusted '{s.name}'")
+            elif t == "pause_bot": s.enabled = False; applied.append(f"Paused '{s.name}'")
+            elif t == "resume_bot": s.enabled = True; applied.append(f"Resumed '{s.name}'")
+            elif t == "set_live": s.live = True; applied.append(f"'{s.name}' → LIVE")
+            elif t == "set_dry": s.live = False; applied.append(f"'{s.name}' → dry-run")
+            elif t == "set_autonomous": s.autonomous = True; applied.append(f"'{s.name}' → autonomous")
+            elif t == "set_manual": s.autonomous = False; applied.append(f"'{s.name}' → manual")
+            else:
+                applied.append(f"(unknown action '{t}')"); continue
+            dirty = True; touched.add(s.id)
+    if dirty:
+        strategies.save_strategies(strats)
+    return applied, touched
+
+
+def process_chat(client, cfg):
+    """Answer new client chat messages with the client's OWN AI; apply the actions
+    it returns and post the reply back into the thread."""
+    msgs = cfg.get("chat", []) or []
+    seen = _load_chat_seen()
+    todo = [m for m in msgs if m.get("role") == "client" and m.get("id") and m.get("id") not in seen]
+    if not todo:
+        return
+    if not assist.available():
+        for m in todo:
+            sync.post_chat_reply(
+                "Your AI isn't connected yet. Add your Anthropic API key to your bot's .env "
+                "(ANTHROPIC_API_KEY=...) and restart — then I can manage your bots from here.",
+                [], reply_to=m["id"])
+            seen.add(m["id"])
+        _save_chat_seen(seen)
+        return
+
+    bots_ctx = [{"id": s.id, "name": s.name, "description": s.description, "rules": s.rules,
+                 "asset_class": s.asset_class, "allocation_usd": float(s.allocation_usd),
+                 "enabled": s.enabled, "live": s.live, "autonomous": s.autonomous}
+                for s in strategies.load_strategies()]
+    port_ctx = _portfolio_ctx(client)
+    history = [{"role": m.get("role"), "text": m.get("text", "")} for m in msgs[-8:]]
+
+    for m in todo:
+        log.info("chat: answering %s", m.get("id"))
+        resp = assist.run_chat(m.get("text", ""), bots_ctx, port_ctx, history)
+        seen.add(m["id"])
+        if resp is None:
+            sync.post_chat_reply("I couldn't reach your AI just now — please try again in a moment.",
+                                 [], reply_to=m["id"])
+            continue
+        summary, touched = apply_chat_actions(resp.actions)
+        states = {s.id: {"name": s.name, "description": s.description, "rules": s.rules,
+                         "asset_class": s.asset_class, "allocation_usd": float(s.allocation_usd),
+                         "enabled": s.enabled, "live": s.live, "autonomous": s.autonomous}
+                  for s in strategies.load_strategies() if s.id in touched}
+        sync.post_chat_reply(resp.reply or "Done.", summary, reply_to=m["id"], bot_states=states)
+    _save_chat_seen(seen)
 
 
 def self_update():
@@ -153,16 +208,13 @@ def self_update():
 
 def main():
     config.require_credentials()
-    log.info("Starting. DRY_RUN=%s  autonomous=%s  account=%s  platform=%s  assist=%s",
-             config.DRY_RUN, effective_autonomous(), config.DEFAULT_ACCOUNT_NUMBER,
-             "on" if sync.enabled() else "off", "on" if assist.available() else "off")
-    if config.DRY_RUN:
-        log.info("DRY_RUN is ON — approved proposals are simulated, no live orders.")
+    log.info("Starting. DRY_RUN=%s  account=%s  platform=%s  ai=%s  poll=%ss",
+             config.DRY_RUN, config.DEFAULT_ACCOUNT_NUMBER,
+             "on" if sync.enabled() else "off", "on" if assist.available() else "off", POLL_SECONDS)
+    if config.FORCE_DRY_RUN:
+        log.info("FORCE_DRY_RUN is ON — every bot is hard-locked to dry-run regardless of the dashboard.")
     if config.FORCE_MANUAL_APPROVAL:
-        log.info("FORCE_MANUAL_APPROVAL is ON — autonomous is hard-locked off; every trade needs manual approval.")
-    elif effective_autonomous():
-        log.warning("AUTONOMOUS is ON — proposals will be auto-approved and executed "
-                    "without manual approval (still gated by guardrails + dry-run).")
+        log.info("FORCE_MANUAL_APPROVAL is ON — autonomous is hard-locked off; every trade needs approval.")
 
     self_update()  # pull latest before starting (re-execs if there's an update)
     client = build_client()
@@ -179,36 +231,41 @@ def main():
                 last_update = time.time()
                 self_update()
 
-            assist_requests = sync.pull_and_apply_config()   # applies approvals + allocation changes
+            cfg = sync.pull_and_apply_config()   # applies per-bot dashboard changes + approvals
 
             if runtime_stopped():
-                log.warning("STOP engaged from dashboard — idling (no generation, no execution). "
-                            "Turn Live or Autonomous back on to resume.")
+                log.warning("STOP engaged — idling (no trades). Turn a bot back on to resume.")
+                process_chat(client, cfg)        # still answer the client while stopped
                 sync.push_snapshot(client)
                 time.sleep(POLL_SECONDS)
                 continue
 
-            auto = effective_autonomous()
+            strats = strategies.load_strategies()
+            by_id = {s.id: s for s in strats}
+            manual_lock = config.FORCE_MANUAL_APPROVAL
 
-            # Autonomous generation: the client's OWN AI proposes trades (rate-limited).
-            if auto and (time.time() - last_auto >= config.AUTONOMOUS_TICK_SECONDS):
-                log.info("autonomous mode ON — running strategy tick")
-                autonomous_tick(client)
+            # per-bot autonomous generation (rate-limited across the fleet)
+            if not manual_lock and assist.available() and (time.time() - last_auto >= config.AUTONOMOUS_TICK_SECONDS):
+                for s in strats:
+                    if s.enabled and s.autonomous:
+                        autonomous_tick(client, s)
                 last_auto = time.time()
 
-            # Turn any new natural-language requests into pending proposals.
-            process_assist(client, assist_requests)
-
-            # Autonomous mode auto-approves pending proposals (no manual approval needed).
-            if auto:
+            # per-bot auto-approval: only proposals belonging to an autonomous bot
+            if not manual_lock:
                 for p in proposals.list_all(status="pending"):
-                    proposals.set_status(p["id"], "approved")
-                    log.info("autonomous auto-approve: %s %s (%s)", p["side"], p["symbol"], p["id"])
+                    s = by_id.get(p["strategy_id"])
+                    if s and s.enabled and s.autonomous:
+                        proposals.set_status(p["id"], "approved")
+                        log.info("autonomous auto-approve [%s]: %s %s", p["strategy_id"], p["side"], p["symbol"])
 
-            strat_by_id = {s.id: s for s in strategies.load_strategies()}
+            # execute approved (per-bot dry-run gating happens inside execute_proposal)
             for p in proposals.list_all(status="approved"):
-                execute_proposal(client, p, strat_by_id.get(p["strategy_id"]),
+                execute_proposal(client, p, by_id.get(p["strategy_id"]),
                                  account_id=config.DEFAULT_ACCOUNT_NUMBER)
+
+            # conversational fleet control
+            process_chat(client, cfg)
 
             sync.push_snapshot(client)
             time.sleep(POLL_SECONDS)
