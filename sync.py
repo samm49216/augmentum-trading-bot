@@ -147,6 +147,8 @@ def build_snapshot(client):
     snap["realized_pl"] = float(ledger.get("realized_total", 0) or 0)
     snap["stopped"] = executor.runtime_stopped()
     snap["ai_connected"] = assist.available()
+    snap["force_dry_run"] = config.FORCE_DRY_RUN            # hard-lock: forces dry-run regardless of go-live
+    snap["force_manual_approval"] = config.FORCE_MANUAL_APPROVAL  # hard-lock: blocks autonomous auto-approve
     snap["strategies"] = [{
         "id": s.id, "name": s.name, "description": s.description, "rules": s.rules,
         "asset_class": s.asset_class,
