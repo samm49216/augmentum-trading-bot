@@ -9,6 +9,7 @@ and proposed trades become pending proposals the client must still approve.
 """
 import json
 import logging
+import re
 from typing import List, Optional
 
 from pydantic import BaseModel
@@ -194,6 +195,27 @@ SYSTEM_CHAT = (
 )
 
 
+def _extract_json(text):
+    """Pull a JSON object out of the model's reply (tolerates markdown fences / stray prose)."""
+    if not text:
+        return None
+    t = text.strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
+        t = re.sub(r"\s*```$", "", t).strip()
+    try:
+        return json.loads(t)
+    except Exception:
+        pass
+    m = re.search(r"\{.*\}", t, re.DOTALL)   # first {...last} block
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            return None
+    return None
+
+
 def run_chat(message: str, bots_ctx: list, portfolio_ctx: dict, history_ctx: list = None):
     """Conversational fleet control via the client's OWN Claude. Returns a
     ChatResponse (reply + actions) or None."""
@@ -212,16 +234,28 @@ def run_chat(message: str, bots_ctx: list, portfolio_ctx: dict, history_ctx: lis
     parts.append(f"My bots:\n{json.dumps(bots_ctx, indent=2)}")
     parts.append(f"My portfolio:\n{json.dumps(portfolio_ctx, indent=2)}")
     parts.append(f'My new message:\n"{message}"')
+    parts.append(
+        'Respond with ONLY a JSON object (no prose before or after, no markdown fences), shaped like:\n'
+        '{"reply": "<your plain-English reply>", "actions": [ {"type": "create_bot", "name": "...", '
+        '"rules": "...", "asset_class": "equity", "allocation_usd": 0} ]}\n'
+        'Each action uses the fields from your instructions. Use "actions": [] when nothing needs changing.'
+    )
     try:
-        resp = client.messages.parse(
+        # Plain-text JSON, NOT grammar-constrained output_format — that compiles the full
+        # schema into a decoding grammar and times out on this fleet-management schema.
+        # Opus reliably emits valid JSON when asked; we parse + validate it ourselves.
+        resp = client.messages.create(
             model=config.ANTHROPIC_MODEL,
-            max_tokens=16000,
-            thinking={"type": "adaptive"},
+            max_tokens=8000,
             system=[{"type": "text", "text": SYSTEM_CHAT, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": "\n\n".join(parts)}],
-            output_format=ChatResponse,
+            timeout=90,
         )
-        return resp.parsed_output
+        text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
+        data = _extract_json(text)
+        if not isinstance(data, dict):
+            return {"__error__": "AI returned unparseable output"}
+        return ChatResponse(reply=str(data.get("reply", "")), actions=data.get("actions", []) or [])
     except Exception as e:
         log.error("chat call failed: %s", e)
         return {"__error__": f"{type(e).__name__}: {str(e)[:220]}"}   # temporary: surface the real error
