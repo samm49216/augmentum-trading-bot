@@ -38,8 +38,23 @@ def _headers():
 
 
 def _num(v):
+    if v is None:
+        return None
     try:
         return float(v)
+    except Exception:
+        pass
+    # Public may wrap amounts in a nested Money-like object or dict — dig one level.
+    for attr in ("value", "amount", "total", "raw"):
+        inner = getattr(v, attr, None) if not isinstance(v, dict) else v.get(attr)
+        if inner is not None:
+            try:
+                return float(inner)
+            except Exception:
+                pass
+    cents = getattr(v, "cents", None) if not isinstance(v, dict) else v.get("cents")
+    try:
+        return float(cents) / 100 if cents is not None else None
     except Exception:
         return None
 
@@ -64,12 +79,13 @@ def build_snapshot(client):
             equity = _first_num(pf, ("equity", "market_value", "positions_value", "equity_value"))
             cash = _first_num(pf, ("cash", "cash_balance", "available_cash", "settled_cash", "withdrawable_cash"))
             total = _first_num(pf, ("account_value", "total_value", "total_equity", "net_liquidation_value", "portfolio_value"))
+            bp = _first_num(pf, ("buying_power",))
             if total is None:
                 parts = [x for x in (equity, cash) if x is not None]
-                total = sum(parts) if parts else None
+                total = sum(parts) if parts else bp   # last resort: show buying power
             snap["equity"] = equity
             snap["cash"] = cash
-            snap["buying_power"] = _first_num(pf, ("buying_power",))
+            snap["buying_power"] = bp
             snap["account_value"] = total
             positions = []
             for pos in getattr(pf, "positions", []) or []:

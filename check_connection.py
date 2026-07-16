@@ -10,8 +10,22 @@ import config
 
 
 def _num(v):
+    if v is None:
+        return None
     try:
         return float(v)
+    except Exception:
+        pass
+    for attr in ("value", "amount", "total", "raw"):
+        inner = getattr(v, attr, None) if not isinstance(v, dict) else v.get(attr)
+        if inner is not None:
+            try:
+                return float(inner)
+            except Exception:
+                pass
+    cents = getattr(v, "cents", None) if not isinstance(v, dict) else (v.get("cents") if isinstance(v, dict) else None)
+    try:
+        return float(cents) / 100 if cents is not None else None
     except Exception:
         return None
 
@@ -71,9 +85,14 @@ def main():
                 ef, ev = _first_attr(pf, ("equity", "total_equity", "account_value", "equity_value", "total_value"))
                 cf, cv = _first_attr(pf, ("buying_power", "cash", "cash_balance", "available_cash", "withdrawable_cash"))
                 npos = len(getattr(pf, "positions", []) or [])
-                print(f"   equity:       {ev}   (field: {ef})")
-                print(f"   cash/bp:      {cv}   (field: {cf})")
+                print(f"   equity:       {_num(ev)}   (field: {ef}, raw: {ev!r})")
+                print(f"   cash/bp:      {_num(cv)}   (field: {cf}, raw: {cv!r})")
                 print(f"   positions:    {npos}")
+                try:  # full structure, so any nested balance format is visible
+                    raw = pf.model_dump() if hasattr(pf, "model_dump") else vars(pf)
+                    print(f"   raw portfolio: {str(raw)[:500]}")
+                except Exception:
+                    pass
                 if (_num(ev) or 0) > 0 or (_num(cv) or 0) > 0:
                     funded.append(number)
             except Exception as e:

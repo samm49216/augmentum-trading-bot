@@ -11,8 +11,10 @@ python3 -m venv .venv
 
 if [ ! -f .env ]; then
   cp .env.example .env
+  chmod 600 .env   # secrets — owner read/write only
   echo "→ Created .env from template."
 else
+  chmod 600 .env 2>/dev/null || true   # tighten perms on an existing .env too
   echo "→ .env already exists (left as-is)."
 fi
 
