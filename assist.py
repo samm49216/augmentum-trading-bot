@@ -128,18 +128,31 @@ def run_autonomous(strategies_ctx: list, portfolio_ctx: dict, max_trades: int = 
         f"My strategies:\n{json.dumps(strategies_ctx, indent=2)}\n\n"
         f"My live portfolio:\n{json.dumps(portfolio_ctx, indent=2)}\n\n"
         f"Autonomous cycle. Propose at most {max_trades} order(s) to place right now "
-        "that fit my strategies and risk limits, or none if no action is warranted."
+        "that fit my strategies and risk limits, or none if no action is warranted.\n\n"
+        'Respond with ONLY a JSON object (no prose, no fences): {"summary":"...",'
+        '"allocation_changes":[{"strategy_id":"...","new_allocation":0,"reason":"..."}],'
+        '"proposed_trades":[{"strategy_id":"...","symbol":"...","side":"BUY","asset_class":"equity",'
+        '"amount":0,"rationale":"..."}],"notes":"..."}. Use empty lists when nothing applies.'
     )
     try:
-        resp = client.messages.parse(
+        # plain-text JSON — constrained-decoding output_format times out on this schema
+        resp = client.messages.create(
             model=config.ANTHROPIC_MODEL,
-            max_tokens=16000,
-            thinking={"type": "adaptive"},
+            max_tokens=8000,
             system=[{"type": "text", "text": SYSTEM_AUTO, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": user_content}],
-            output_format=AssistSuggestion,
+            timeout=90,
         )
-        return resp.parsed_output
+        text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
+        data = _extract_json(text)
+        if not isinstance(data, dict):
+            return None
+        return AssistSuggestion(
+            summary=str(data.get("summary", "")),
+            allocation_changes=data.get("allocation_changes", []) or [],
+            proposed_trades=data.get("proposed_trades", []) or [],
+            notes=str(data.get("notes", "")),
+        )
     except Exception as e:
         log.error("autonomous call failed: %s", e)
         return None
