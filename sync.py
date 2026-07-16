@@ -87,6 +87,11 @@ def build_snapshot(client):
             snap["cash"] = cash
             snap["buying_power"] = bp
             snap["account_value"] = total
+            if total is None:  # temporary: surface the raw structure so the balance parser can be fixed
+                try:
+                    snap["_portfolio_debug"] = str(pf.model_dump() if hasattr(pf, "model_dump") else vars(pf))[:900]
+                except Exception:
+                    pass
             positions = []
             for pos in getattr(pf, "positions", []) or []:
                 inst = getattr(pos, "instrument", None)

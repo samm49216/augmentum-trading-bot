@@ -79,7 +79,7 @@ def run_assist(request_text: str, strategies_ctx: list, portfolio_ctx: dict):
     try:
         resp = client.messages.parse(
             model=config.ANTHROPIC_MODEL,
-            max_tokens=8000,
+            max_tokens=16000,
             thinking={"type": "adaptive"},
             system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": user_content}],
@@ -132,7 +132,7 @@ def run_autonomous(strategies_ctx: list, portfolio_ctx: dict, max_trades: int = 
     try:
         resp = client.messages.parse(
             model=config.ANTHROPIC_MODEL,
-            max_tokens=8000,
+            max_tokens=16000,
             thinking={"type": "adaptive"},
             system=[{"type": "text", "text": SYSTEM_AUTO, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": user_content}],
@@ -214,7 +214,7 @@ def run_chat(message: str, bots_ctx: list, portfolio_ctx: dict, history_ctx: lis
     try:
         resp = client.messages.parse(
             model=config.ANTHROPIC_MODEL,
-            max_tokens=8000,
+            max_tokens=16000,
             thinking={"type": "adaptive"},
             system=[{"type": "text", "text": SYSTEM_CHAT, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": "\n\n".join(parts)}],
