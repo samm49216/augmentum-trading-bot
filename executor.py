@@ -60,6 +60,16 @@ def effective_autonomous():
     return auto if auto is not None else config.AUTONOMOUS
 
 
+def runtime_stopped():
+    """Dashboard emergency-STOP flag (hard halt) from runtime.json."""
+    try:
+        if RUNTIME.exists():
+            return bool(json.loads(RUNTIME.read_text()).get("stopped"))
+    except Exception:
+        pass
+    return False
+
+
 def _position(client, symbol, account_id):
     """(cost_basis, current_value) for a held symbol, for realized-P&L math."""
     try:

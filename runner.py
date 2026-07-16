@@ -8,6 +8,9 @@ Generates no trades on its own. Respects the HALT kill switch and DRY_RUN.
 """
 import json
 import logging
+import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -17,7 +20,7 @@ import guardrails
 import proposals
 import strategies
 import sync
-from executor import execute_proposal, effective_autonomous
+from executor import execute_proposal, effective_autonomous, runtime_stopped
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("runner")
@@ -125,6 +128,29 @@ def autonomous_tick(client):
     log.info("autonomous tick: generated %s proposal(s). %s", added, (sugg.summary or "")[:200])
 
 
+def self_update():
+    """git pull; if the code changed, re-exec so operator fixes reach the client
+    automatically. Best-effort, only when run from a git clone, never fatal."""
+    if not config.AUTO_UPDATE:
+        return
+    here = Path(__file__).parent
+    if not (here / ".git").exists():
+        return
+    try:
+        def rev():
+            return subprocess.run(["git", "-C", str(here), "rev-parse", "HEAD"],
+                                  capture_output=True, text=True, timeout=30).stdout.strip()
+        before = rev()
+        subprocess.run(["git", "-C", str(here), "pull", "--ff-only"],
+                       capture_output=True, text=True, timeout=120)
+        after = rev()
+        if before and after and before != after:
+            log.warning("self-update: %s -> %s — restarting", before[:7], after[:7])
+            os.execv(sys.executable, [sys.executable, str(here / "runner.py")])
+    except Exception as e:
+        log.warning("self-update check failed: %s", e)
+
+
 def main():
     config.require_credentials()
     log.info("Starting. DRY_RUN=%s  autonomous=%s  account=%s  platform=%s  assist=%s",
@@ -138,8 +164,10 @@ def main():
         log.warning("AUTONOMOUS is ON — proposals will be auto-approved and executed "
                     "without manual approval (still gated by guardrails + dry-run).")
 
+    self_update()  # pull latest before starting (re-execs if there's an update)
     client = build_client()
     last_auto = 0.0
+    last_update = time.time()
     try:
         while True:
             if guardrails.kill_switch_active():
@@ -147,7 +175,19 @@ def main():
                 time.sleep(POLL_SECONDS)
                 continue
 
+            if time.time() - last_update >= config.AUTO_UPDATE_SECONDS:
+                last_update = time.time()
+                self_update()
+
             assist_requests = sync.pull_and_apply_config()   # applies approvals + allocation changes
+
+            if runtime_stopped():
+                log.warning("STOP engaged from dashboard — idling (no generation, no execution). "
+                            "Turn Live or Autonomous back on to resume.")
+                sync.push_snapshot(client)
+                time.sleep(POLL_SECONDS)
+                continue
+
             auto = effective_autonomous()
 
             # Autonomous generation: the client's OWN AI proposes trades (rate-limited).

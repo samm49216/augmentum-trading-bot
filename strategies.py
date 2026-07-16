@@ -12,6 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 
 STRATEGIES_PATH = Path(__file__).parent / "strategies.json"
+EXAMPLE_PATH = Path(__file__).parent / "strategies.example.json"
 
 
 @dataclass
@@ -27,7 +28,12 @@ class Strategy:
 
 def load_strategies(path: Path = STRATEGIES_PATH):
     if not path.exists():
-        return []
+        # strategies.json is local (gitignored) so the bot can edit it without
+        # colliding with git self-updates. Bootstrap it from the shipped example.
+        if EXAMPLE_PATH.exists():
+            path.write_text(EXAMPLE_PATH.read_text())
+        else:
+            return []
     raw = json.loads(path.read_text())
     out = []
     for s in raw.get("strategies", []):

@@ -53,6 +53,11 @@ FORCE_MANUAL_APPROVAL = os.getenv("FORCE_MANUAL_APPROVAL", "false").strip().lowe
 AUTONOMOUS_TICK_SECONDS = _int("AUTONOMOUS_TICK_SECONDS", 900)
 MAX_AUTONOMOUS_TRADES_PER_TICK = _int("MAX_AUTONOMOUS_TRADES_PER_TICK", 2)
 
+# Self-update: periodically `git pull` and restart so operator fixes reach the
+# client automatically (only when run from a git clone). Set AUTO_UPDATE=false to pin.
+AUTO_UPDATE = os.getenv("AUTO_UPDATE", "true").strip().lower() not in ("false", "0", "no", "off")
+AUTO_UPDATE_SECONDS = _int("AUTO_UPDATE_SECONDS", 21600)  # 6h
+
 # Risk guardrails (fail closed)
 SYMBOL_ALLOWLIST = [s.strip().upper() for s in os.getenv("SYMBOL_ALLOWLIST", "").split(",") if s.strip()]
 MAX_ORDER_NOTIONAL = _dec("MAX_ORDER_NOTIONAL", 250)

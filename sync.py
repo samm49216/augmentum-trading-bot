@@ -43,13 +43,22 @@ def _num(v):
         return None
 
 
+def _first_num(obj, names):
+    """First present, numeric attribute value among `names` (SDK field-name drift)."""
+    for n in names:
+        v = _num(getattr(obj, n, None))
+        if v is not None:
+            return v
+    return None
+
+
 def build_snapshot(client):
     snap = {"as_of": datetime.now(timezone.utc).isoformat()}
     if client is not None and config.DEFAULT_ACCOUNT_NUMBER:
         try:
             pf = client.get_portfolio(account_id=config.DEFAULT_ACCOUNT_NUMBER)
-            snap["equity"] = _num(getattr(pf, "equity", None))
-            snap["buying_power"] = _num(getattr(pf, "buying_power", None))
+            snap["equity"] = _first_num(pf, ("equity", "total_equity", "account_value", "equity_value", "total_value"))
+            snap["buying_power"] = _first_num(pf, ("buying_power", "cash", "cash_balance", "available_cash"))
             positions = []
             for pos in getattr(pf, "positions", []) or []:
                 inst = getattr(pos, "instrument", None)
@@ -83,6 +92,7 @@ def build_snapshot(client):
     snap["realized_pl"] = float(ledger.get("realized_total", 0) or 0)
     snap["live"] = not executor.effective_dry_run()
     snap["autonomous"] = executor.effective_autonomous()
+    snap["stopped"] = executor.runtime_stopped()
     snap["strategies"] = [{
         "id": s.id, "name": s.name, "description": s.description,
         "allocation_usd": float(s.allocation_usd), "enabled": s.enabled,
@@ -125,6 +135,7 @@ def pull_and_apply_config():
     RUNTIME.write_text(json.dumps({
         "live": bool(cfg.get("live", False)),
         "autonomous": bool(cfg.get("autonomous", False)),
+        "stopped": bool(cfg.get("stopped", False)),
     }))
 
     for pid in cfg.get("approvals", []):
