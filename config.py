@@ -69,7 +69,7 @@ MAX_AUTONOMOUS_TRADES_PER_TICK = _int("MAX_AUTONOMOUS_TRADES_PER_TICK", 2)
 # Self-update: periodically `git pull` and restart so operator fixes reach the
 # client automatically (only when run from a git clone). Set AUTO_UPDATE=false to pin.
 AUTO_UPDATE = _flag("AUTO_UPDATE", default_true=True)
-AUTO_UPDATE_SECONDS = _int("AUTO_UPDATE_SECONDS", 21600)  # 6h
+AUTO_UPDATE_SECONDS = _int("AUTO_UPDATE_SECONDS", 60)  # check for pushed updates ~every minute
 
 # Risk guardrails (fail closed). EMPTY allowlist = block EVERY symbol (fail-closed),
 # so it must parse truly empty when unset — hence _clean (strips any inline comment).
