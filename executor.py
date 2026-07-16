@@ -153,6 +153,7 @@ def execute_proposal(client, p, strategy, account_id=None):
         symbol=p["symbol"], side=p["side"], asset_class=p["asset_class"],
         strategy_id=p["strategy_id"],
         allocation=(strategy.allocation_usd if strategy else None),
+        allowed_symbols=(strategy.allowed_symbols if strategy else None),
         is_day_trade=bool(p.get("is_day_trade", False)),
     )
 

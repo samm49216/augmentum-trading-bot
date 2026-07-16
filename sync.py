@@ -125,6 +125,7 @@ def build_snapshot(client):
         "asset_class": s.asset_class,
         "allocation_usd": float(s.allocation_usd), "enabled": s.enabled,
         "live": bool(s.live), "autonomous": bool(s.autonomous),
+        "allowed_symbols": list(s.allowed_symbols or []),
         "deployed": float(deployed.get(s.id, 0) or 0),
         "realized_pl": float(strat_realized.get(s.id, 0) or 0),
         "unrealized_pl": round(unreal.get(s.id, 0.0), 2),
@@ -193,6 +194,10 @@ def pull_and_apply_config():
             for f in ("name", "description", "rules", "asset_class"):
                 if f in ch and getattr(s, f) != ch[f]:
                     setattr(s, f, ch[f]); dirty = True
+            if "allowed_symbols" in ch:
+                nv = [str(x).upper() for x in (ch["allowed_symbols"] or [])]
+                if nv != s.allowed_symbols:
+                    s.allowed_symbols = nv; dirty = True
             if "allocation_usd" in ch:
                 na = Decimal(str(ch["allocation_usd"]))
                 if na != s.allocation_usd:

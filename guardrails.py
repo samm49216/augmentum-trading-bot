@@ -1,6 +1,8 @@
-"""Fail-closed risk guardrails. Every order must pass authorize() before placement.
+"""Risk guardrails. Every order must pass authorize() before placement.
 
-Any uncertainty => BLOCK. Daily counters persist per-day under ./state/.
+Dollar caps, PDT, and loss limits fail CLOSED (any uncertainty => BLOCK). Symbol
+allowlists are OPT-IN: empty = every symbol allowed; list some = restrict to those.
+Daily counters persist per-day under ./state/.
 """
 import json
 from dataclasses import dataclass, field
@@ -23,6 +25,7 @@ class OrderIntent:
     asset_class: str = "equity"     # "equity" | "option" | "crypto"
     strategy_id: str = "default"
     allocation: Decimal = None      # the strategy's capital budget ($), if any
+    allowed_symbols: list = None    # this bot's ticker restriction; empty/None = any
 
 
 def _today_state_path() -> Path:
@@ -59,10 +62,15 @@ def authorize(intent: OrderIntent):
         return False, "HALT file present — kill switch engaged"
 
     sym = (intent.symbol or "").upper()
-    if not config.SYMBOL_ALLOWLIST:
-        return False, "SYMBOL_ALLOWLIST empty — fail-closed (nothing permitted)"
-    if sym not in config.SYMBOL_ALLOWLIST:
-        return False, f"{sym} not in allowlist {config.SYMBOL_ALLOWLIST}"
+    # Allowlists are OPT-IN restrictions — empty means "no restriction" (all symbols
+    # allowed). An order must satisfy this bot's own ticker list (if the client set
+    # one) AND the fleet-wide list (if the operator set one). Dollar caps, PDT, and
+    # loss limits below still fail closed.
+    bot_allow = [s.upper() for s in (intent.allowed_symbols or [])]
+    if bot_allow and sym not in bot_allow:
+        return False, f"{sym} not in this bot's allowed tickers {bot_allow}"
+    if config.SYMBOL_ALLOWLIST and sym not in config.SYMBOL_ALLOWLIST:
+        return False, f"{sym} not in the account allowlist {config.SYMBOL_ALLOWLIST}"
 
     if intent.notional is None or Decimal(intent.notional) <= 0:
         return False, "notional not estimated — run preflight before authorizing"

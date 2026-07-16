@@ -29,6 +29,7 @@ class Strategy:
     rules: str = ""                 # free-text trading mandate the client's AI acts on
     live: bool = False              # per-bot: real orders (True) vs dry-run (False)
     autonomous: bool = False        # per-bot: trade 24/7 without per-trade approval
+    allowed_symbols: list = field(default_factory=list)  # ticker restriction; empty = any
 
 
 def load_strategies(path: Path = STRATEGIES_PATH):
@@ -53,6 +54,7 @@ def load_strategies(path: Path = STRATEGIES_PATH):
             rules=s.get("rules", ""),
             live=bool(s.get("live", False)),
             autonomous=bool(s.get("autonomous", False)),
+            allowed_symbols=list(s.get("allowed_symbols", []) or []),
         ))
     return out
 
@@ -71,6 +73,7 @@ def save_strategies(strats, path: Path = STRATEGIES_PATH):
             "allocation_usd": float(s.allocation_usd), "enabled": bool(s.enabled),
             "asset_class": s.asset_class, "params": s.params,
             "rules": s.rules, "live": bool(s.live), "autonomous": bool(s.autonomous),
+            "allowed_symbols": list(s.allowed_symbols or []),
         }
         for s in strats
     ]}

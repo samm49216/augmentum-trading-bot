@@ -156,6 +156,7 @@ class BotAction(BaseModel):
     rules: str = ""
     asset_class: str = ""            # crypto|equity|option
     allocation_usd: Optional[float] = None
+    allowed_symbols: List[str] = []  # restrict this bot to these tickers; empty = any
     symbol: str = ""                 # for propose_trade
     side: str = ""                   # BUY|SELL
     amount: Optional[float] = None
@@ -175,10 +176,12 @@ SYSTEM_CHAT = (
     "dry-run, autonomous vs manual).\n\n"
     "Given the owner's message, their current bots, and a portfolio snapshot, write a "
     "short plain-English reply AND emit concrete actions to apply. Actions:\n"
-    "- create_bot (name, rules, asset_class, allocation_usd) — NEW bots ALWAYS start "
-    "in dry-run + manual; never make a new bot live or autonomous unless the owner "
-    "explicitly asks for that in this very message.\n"
-    "- adjust_bot (bot_id + any of name/description/rules/asset_class/allocation_usd)\n"
+    "- create_bot (name, rules, asset_class, allocation_usd, optional allowed_symbols) "
+    "— NEW bots ALWAYS start in dry-run + manual; never make a new bot live or "
+    "autonomous unless the owner explicitly asks for that in this very message. Set "
+    "allowed_symbols only if the owner names specific tickers to limit the bot to; "
+    "otherwise leave it empty (the bot may trade any symbol).\n"
+    "- adjust_bot (bot_id + any of name/description/rules/asset_class/allocation_usd/allowed_symbols)\n"
     "- pause_bot / resume_bot (bot_id)\n"
     "- set_live / set_dry (bot_id); set_autonomous / set_manual (bot_id)\n"
     "- propose_trade (bot_id, symbol, side, amount, rationale) — one order the owner "

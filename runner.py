@@ -104,7 +104,8 @@ def apply_chat_actions(actions):
                 id=sid, name=a.name or sid, description=a.description or "",
                 allocation_usd=Decimal(str(a.allocation_usd or 0)), enabled=True,
                 asset_class=(a.asset_class or "equity"), rules=a.rules or "",
-                live=False, autonomous=False)
+                live=False, autonomous=False,
+                allowed_symbols=[x.upper() for x in (a.allowed_symbols or [])])
             strats.append(s); by_id[sid] = s; dirty = True; touched.add(sid)
             applied.append(f"Created bot '{s.name}' (dry-run, manual)")
         elif t == "propose_trade":
@@ -126,6 +127,7 @@ def apply_chat_actions(actions):
                 if a.rules: s.rules = a.rules
                 if a.asset_class: s.asset_class = a.asset_class
                 if a.allocation_usd is not None: s.allocation_usd = Decimal(str(a.allocation_usd))
+                if a.allowed_symbols: s.allowed_symbols = [x.upper() for x in a.allowed_symbols]
                 applied.append(f"Adjusted '{s.name}'")
             elif t == "pause_bot": s.enabled = False; applied.append(f"Paused '{s.name}'")
             elif t == "resume_bot": s.enabled = True; applied.append(f"Resumed '{s.name}'")
@@ -177,7 +179,8 @@ def process_chat(client, cfg):
         summary, touched = apply_chat_actions(resp.actions)
         states = {s.id: {"name": s.name, "description": s.description, "rules": s.rules,
                          "asset_class": s.asset_class, "allocation_usd": float(s.allocation_usd),
-                         "enabled": s.enabled, "live": s.live, "autonomous": s.autonomous}
+                         "enabled": s.enabled, "live": s.live, "autonomous": s.autonomous,
+                         "allowed_symbols": list(s.allowed_symbols or [])}
                   for s in strategies.load_strategies() if s.id in touched}
         sync.post_chat_reply(resp.reply or "Done.", summary, reply_to=m["id"], bot_states=states)
     _save_chat_seen(seen)
