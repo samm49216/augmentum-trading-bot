@@ -7,7 +7,7 @@ are built from the installed publicdotcom-py models.
 import json
 import logging
 import uuid
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
 
 import config
@@ -111,11 +111,14 @@ def _common_kwargs(p):
         expiration=OrderExpirationRequest(time_in_force=TimeInForce.DAY, expiration_time=None),
     )
     if p.get("quantity") is not None:
-        k["quantity"] = Decimal(str(p["quantity"]))
+        k["quantity"] = Decimal(str(p["quantity"])).quantize(Decimal("0.00000001"), rounding=ROUND_DOWN)
     if p.get("amount") is not None:
-        k["amount"] = Decimal(str(p["amount"]))
+        # Public's `amount` is a USD notional accepting at most 2 decimals (cents); more
+        # are rejected ("too many decimal places"). Round DOWN so we never round up into
+        # a bigger order than intended.
+        k["amount"] = Decimal(str(p["amount"])).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
     if p.get("limit_price") is not None:
-        k["limit_price"] = Decimal(str(p["limit_price"]))
+        k["limit_price"] = Decimal(str(p["limit_price"])).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
     return k
 
 

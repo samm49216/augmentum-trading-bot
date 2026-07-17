@@ -111,6 +111,7 @@ AUTO_UPDATE_SECONDS = _int("AUTO_UPDATE_SECONDS", 60)  # check for pushed update
 # Risk guardrails (fail closed). EMPTY allowlist = block EVERY symbol (fail-closed),
 # so it must parse truly empty when unset — hence _clean (strips any inline comment).
 SYMBOL_ALLOWLIST = [s.strip().upper() for s in _clean(os.getenv("SYMBOL_ALLOWLIST", "")).split(",") if s.strip()]
+MIN_ORDER_NOTIONAL = _dec("MIN_ORDER_NOTIONAL", 1)     # reject dust/typo orders below this ($)
 MAX_ORDER_NOTIONAL = _dec("MAX_ORDER_NOTIONAL", 250)
 MAX_DAILY_NOTIONAL = _dec("MAX_DAILY_NOTIONAL", 1000)
 MAX_DAY_TRADES = _int("MAX_DAY_TRADES", 3)

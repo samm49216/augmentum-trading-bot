@@ -264,11 +264,14 @@ def main():
                         autonomous_tick(client, s)
                 last_auto = time.time()
 
-            # per-bot auto-approval: only proposals belonging to an autonomous bot
+            # Auto-approve ONLY the autonomous engine's OWN proposals. A trade PROPOSED
+            # VIA CHAT (source "chat-ai") always waits for the owner's manual approval —
+            # so a casual or injected chat message can't move real money on its own, even
+            # while the bot is autonomous. Autonomous hands-off trading is unaffected.
             if not manual_lock:
                 for p in proposals.list_all(status="pending"):
                     s = by_id.get(p["strategy_id"])
-                    if s and s.enabled and s.autonomous:
+                    if s and s.enabled and s.autonomous and p.get("source") == "autonomous-ai":
                         proposals.set_status(p["id"], "approved")
                         log.info("autonomous auto-approve [%s]: %s %s", p["strategy_id"], p["side"], p["symbol"])
 

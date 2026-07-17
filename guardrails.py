@@ -74,6 +74,8 @@ def authorize(intent: OrderIntent):
 
     if intent.notional is None or Decimal(intent.notional) <= 0:
         return False, "notional not estimated — run preflight before authorizing"
+    if Decimal(intent.notional) < config.MIN_ORDER_NOTIONAL:
+        return False, f"order notional {intent.notional} < MIN_ORDER_NOTIONAL {config.MIN_ORDER_NOTIONAL} (dust/typo guard)"
     if Decimal(intent.notional) > config.MAX_ORDER_NOTIONAL:
         return False, f"order notional {intent.notional} > MAX_ORDER_NOTIONAL {config.MAX_ORDER_NOTIONAL}"
 
