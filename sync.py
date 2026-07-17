@@ -149,6 +149,9 @@ def build_snapshot(client):
     snap["ai_connected"] = assist.available()
     snap["force_dry_run"] = config.FORCE_DRY_RUN            # hard-lock: forces dry-run regardless of go-live
     snap["force_manual_approval"] = config.FORCE_MANUAL_APPROVAL  # hard-lock: blocks autonomous auto-approve
+    snap["model"] = config.ANTHROPIC_MODEL
+    snap["autonomous_interval_s"] = config.AUTONOMOUS_TICK_SECONDS
+    snap["est_autonomous_monthly_cost"] = config.EST_AUTONOMOUS_MONTHLY_COST
     snap["strategies"] = [{
         "id": s.id, "name": s.name, "description": s.description, "rules": s.rules,
         "asset_class": s.asset_class,

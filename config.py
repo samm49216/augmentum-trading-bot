@@ -61,9 +61,46 @@ AUTONOMOUS = _flag("AUTONOMOUS")
 # veto over unattended trading. Leave false to let them enable autonomous remotely.
 FORCE_MANUAL_APPROVAL = _flag("FORCE_MANUAL_APPROVAL")
 
-# Autonomous generation cadence + per-cycle trade cap (risk guardrails still apply
-# on top of this — autonomous is never unbounded).
-AUTONOMOUS_TICK_SECONDS = _int("AUTONOMOUS_TICK_SECONDS", 60)
+# ── Autonomous cadence: derived from a monthly $ budget + the model's price ──
+# The bot self-paces its autonomous LLM calls so the monthly spend stays ~fixed no
+# matter which model runs (a pricier model simply checks less often). This keeps the
+# client's own API bill predictable. Pin AUTONOMOUS_TICK_SECONDS in .env to bypass
+# the budget and set an exact cadence instead.
+AUTONOMOUS_MONTHLY_BUDGET_USD = float(_dec("AUTONOMOUS_MONTHLY_BUDGET_USD", 10))
+
+# ($ per 1M input, $ per 1M output) — used ONLY to self-pace, never for billing.
+_MODEL_PRICING = {
+    "claude-opus-4-8": (5.0, 25.0), "claude-opus-4-7": (5.0, 25.0),
+    "claude-opus-4-6": (5.0, 25.0), "claude-opus-4-5": (5.0, 25.0),
+    "claude-sonnet-4-6": (3.0, 15.0), "claude-sonnet-4-5": (3.0, 15.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+}
+_EST_INPUT_TOKENS = 1500   # system + strategy rules + portfolio snapshot (conservative)
+_EST_OUTPUT_TOKENS = 300   # compact JSON verdict (usually "no trade")
+_SECONDS_PER_MONTH = 30 * 24 * 3600  # 2,592,000
+
+
+def _est_cost_per_call(model):
+    pin, pout = _MODEL_PRICING.get(model, (5.0, 25.0))  # unknown model -> priciest (safe)
+    return _EST_INPUT_TOKENS / 1e6 * pin + _EST_OUTPUT_TOKENS / 1e6 * pout
+
+
+def _autonomous_tick_seconds():
+    override = _clean(os.getenv("AUTONOMOUS_TICK_SECONDS", ""))
+    if override:  # an explicit .env pin always wins
+        try:
+            return max(15, int(float(override)))
+        except ValueError:
+            pass
+    budget = AUTONOMOUS_MONTHLY_BUDGET_USD if AUTONOMOUS_MONTHLY_BUDGET_USD > 0 else 10.0
+    per_call = _est_cost_per_call(ANTHROPIC_MODEL) or 0.003
+    calls_per_month = max(budget / per_call, 1.0)
+    return int(min(max(_SECONDS_PER_MONTH / calls_per_month, 30), 6 * 3600))  # clamp 30s..6h
+
+
+AUTONOMOUS_TICK_SECONDS = _autonomous_tick_seconds()
+EST_COST_PER_AUTONOMOUS_CALL = round(_est_cost_per_call(ANTHROPIC_MODEL), 5)
+EST_AUTONOMOUS_MONTHLY_COST = round(_SECONDS_PER_MONTH / max(AUTONOMOUS_TICK_SECONDS, 1) * EST_COST_PER_AUTONOMOUS_CALL, 2)
 MAX_AUTONOMOUS_TRADES_PER_TICK = _int("MAX_AUTONOMOUS_TRADES_PER_TICK", 2)
 
 # Self-update: periodically `git pull` and restart so operator fixes reach the
