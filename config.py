@@ -63,7 +63,7 @@ FORCE_MANUAL_APPROVAL = _flag("FORCE_MANUAL_APPROVAL")
 
 # Autonomous generation cadence + per-cycle trade cap (risk guardrails still apply
 # on top of this — autonomous is never unbounded).
-AUTONOMOUS_TICK_SECONDS = _int("AUTONOMOUS_TICK_SECONDS", 900)
+AUTONOMOUS_TICK_SECONDS = _int("AUTONOMOUS_TICK_SECONDS", 60)
 MAX_AUTONOMOUS_TRADES_PER_TICK = _int("MAX_AUTONOMOUS_TRADES_PER_TICK", 2)
 
 # Self-update: periodically `git pull` and restart so operator fixes reach the
